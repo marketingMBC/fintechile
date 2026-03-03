@@ -1,0 +1,527 @@
+{
+  "name": "FTC-WF-001_alta-asociado",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FTC-WF-001: Alta de Asociado\n\n**Workflow ID:** FTC-WF-001\n**Nombre:** Alta de Asociado (New Member Registration)\n**Version:** 1.0.0\n**Autor:** Ops FinteChile\n**Fecha:** 2025-01-01\n\n**Descripcion:**\nRecibe datos de formulario (HubSpot/Typeform) via webhook,\nvalida si el RUT ya existe en Notion, y si no existe:\n- Crea registro en DB Empresas\n- Crea registro en DB Contactos\n- Envia email de confirmacion\n- Notifica por Slack a #ops-fintechile\n\n**Trigger:** Webhook POST\n**Bases de datos Notion:** Empresas, Contactos\n**Notificaciones:** Gmail, Slack",
+        "height": 440,
+        "width": 380,
+        "color": 4
+      },
+      "id": "sticky-metadata",
+      "name": "Workflow Metadata",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ftc-wf-001-alta-asociado",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook - Alta Asociado",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        100
+      ],
+      "webhookId": "ftc-wf-001-alta-asociado"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_EMPRESAS_ID }}",
+          "mode": "id"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "RUT|rich_text",
+              "condition": "equals",
+              "richTextValue": "={{ $json.body.rut }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-query-rut",
+      "name": "Notion - Buscar RUT en Empresas",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        100
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "rut-exists-check",
+              "leftValue": "={{ $json.results ? $json.results.length : 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-rut-exists",
+      "name": "IF - RUT Ya Existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        780,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Webhook - Alta Asociado').item.json.body.contacto_email }}",
+        "subject": "[FinteChile] RUT Duplicado - Registro no procesado",
+        "message": "<html><body><h2>Alerta: RUT Duplicado Detectado</h2><p>Estimado equipo,</p><p>Se ha recibido una solicitud de alta de asociado con un RUT que ya existe en nuestra base de datos.</p><table style=\"border-collapse: collapse; width: 100%;\" border=\"1\" cellpadding=\"8\"><tr><td><strong>Empresa:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.empresa_nombre }}</td></tr><tr><td><strong>RUT:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.rut }}</td></tr><tr><td><strong>Contacto:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.contacto_nombre }}</td></tr><tr><td><strong>Email:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.contacto_email }}</td></tr></table><p>Este registro <strong>NO</strong> fue procesado. Por favor revise el caso manualmente.</p><p>Saludos,<br/>Sistema Automatizado FinteChile</p></body></html>",
+        "options": {
+          "senderName": "FinteChile Ops",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-duplicate-alert",
+      "name": "Gmail - Alerta RUT Duplicado",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1060,
+        -80
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_OPS }}",
+          "mode": "id"
+        },
+        "text": ":warning: *RUT Duplicado Detectado - Alta de Asociado*\n\n*Empresa:* {{ $('Webhook - Alta Asociado').item.json.body.empresa_nombre }}\n*RUT:* {{ $('Webhook - Alta Asociado').item.json.body.rut }}\n*Contacto:* {{ $('Webhook - Alta Asociado').item.json.body.contacto_nombre }} ({{ $('Webhook - Alta Asociado').item.json.body.contacto_email }})\n\nEl registro NO fue procesado por duplicidad. Revisar manualmente.",
+        "otherOptions": {
+          "includeLinkToWorkflow": true
+        }
+      },
+      "id": "slack-duplicate-alert",
+      "name": "Slack - Alerta Duplicado",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1060,
+        100
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: 'RUT ya existe en la base de datos', rut: $('Webhook - Alta Asociado').item.json.body.rut, empresa: $('Webhook - Alta Asociado').item.json.body.empresa_nombre }) }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "respond-duplicate",
+      "name": "Respond - Duplicado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_EMPRESAS_ID }}",
+          "mode": "id"
+        },
+        "properties": {
+          "values": [
+            {
+              "key": "Nombre Empresa|title",
+              "title": "={{ $('Webhook - Alta Asociado').item.json.body.empresa_nombre }}"
+            },
+            {
+              "key": "RUT|rich_text",
+              "richTextValue": "={{ $('Webhook - Alta Asociado').item.json.body.rut }}"
+            },
+            {
+              "key": "Vertical|select",
+              "selectValue": "={{ $('Webhook - Alta Asociado').item.json.body.vertical }}"
+            },
+            {
+              "key": "Estado|select",
+              "selectValue": "Prospecto"
+            },
+            {
+              "key": "Sitio Web|url",
+              "urlValue": "={{ $('Webhook - Alta Asociado').item.json.body.sitio_web }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-create-empresa",
+      "name": "Notion - Crear Empresa",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1060,
+        320
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_CONTACTOS_ID }}",
+          "mode": "id"
+        },
+        "properties": {
+          "values": [
+            {
+              "key": "Nombre Completo|title",
+              "title": "={{ $('Webhook - Alta Asociado').item.json.body.contacto_nombre }}"
+            },
+            {
+              "key": "Email|email",
+              "emailValue": "={{ $('Webhook - Alta Asociado').item.json.body.contacto_email }}"
+            },
+            {
+              "key": "Empresa|relation",
+              "relationValue": "={{ $json.id }}"
+            },
+            {
+              "key": "Cargo|rich_text",
+              "richTextValue": "={{ $('Webhook - Alta Asociado').item.json.body.cargo || 'No especificado' }}"
+            },
+            {
+              "key": "Telefono|phone_number",
+              "phoneValue": "={{ $('Webhook - Alta Asociado').item.json.body.contacto_telefono }}"
+            },
+            {
+              "key": "Activo|checkbox",
+              "checkboxValue": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-create-contacto",
+      "name": "Notion - Crear Contacto",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        320
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Webhook - Alta Asociado').item.json.body.contacto_email }}",
+        "subject": "[FinteChile] Bienvenido - Registro recibido exitosamente",
+        "message": "<html><body style=\"font-family: Arial, sans-serif; color: #333;\"><div style=\"max-width: 600px; margin: 0 auto;\"><div style=\"background-color: #1a1a2e; padding: 20px; text-align: center;\"><h1 style=\"color: #ffffff; margin: 0;\">FinteChile</h1></div><div style=\"padding: 30px; background-color: #f9f9f9;\"><h2>Bienvenido a FinteChile</h2><p>Estimado/a <strong>{{ $('Webhook - Alta Asociado').item.json.body.contacto_nombre }}</strong>,</p><p>Hemos recibido exitosamente la solicitud de registro para <strong>{{ $('Webhook - Alta Asociado').item.json.body.empresa_nombre }}</strong>.</p><h3>Datos registrados:</h3><table style=\"border-collapse: collapse; width: 100%;\" border=\"1\" cellpadding=\"8\"><tr><td><strong>Empresa:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.empresa_nombre }}</td></tr><tr><td><strong>RUT:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.rut }}</td></tr><tr><td><strong>Vertical:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.vertical }}</td></tr><tr><td><strong>Sitio Web:</strong></td><td>{{ $('Webhook - Alta Asociado').item.json.body.sitio_web }}</td></tr></table><p>Nuestro equipo revisara su solicitud y se pondra en contacto con usted a la brevedad para los siguientes pasos.</p><p>Si tiene alguna consulta, no dude en contactarnos.</p></div><div style=\"background-color: #eeeeee; padding: 15px; text-align: center; font-size: 12px;\"><p>FinteChile - Asociacion Fintech de Chile</p><p>Este es un mensaje automatizado, por favor no responda directamente.</p></div></div></body></html>",
+        "options": {
+          "senderName": "FinteChile",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-confirmation",
+      "name": "Gmail - Confirmacion Registro",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1580,
+        240
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_OPS }}",
+          "mode": "id"
+        },
+        "text": ":white_check_mark: *Nuevo Asociado Registrado*\n\n*Empresa:* {{ $('Webhook - Alta Asociado').item.json.body.empresa_nombre }}\n*RUT:* {{ $('Webhook - Alta Asociado').item.json.body.rut }}\n*Vertical:* {{ $('Webhook - Alta Asociado').item.json.body.vertical }}\n*Contacto:* {{ $('Webhook - Alta Asociado').item.json.body.contacto_nombre }}\n*Email:* {{ $('Webhook - Alta Asociado').item.json.body.contacto_email }}\n*Telefono:* {{ $('Webhook - Alta Asociado').item.json.body.contacto_telefono }}\n*Sitio Web:* {{ $('Webhook - Alta Asociado').item.json.body.sitio_web }}\n\nRegistro creado exitosamente en Notion (Empresas + Contactos).",
+        "otherOptions": {
+          "includeLinkToWorkflow": true
+        }
+      },
+      "id": "slack-success-notification",
+      "name": "Slack - Nuevo Asociado",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        420
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Asociado registrado exitosamente', empresa: $('Webhook - Alta Asociado').item.json.body.empresa_nombre, rut: $('Webhook - Alta Asociado').item.json.body.rut }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond - Exito",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Rama: RUT Duplicado\n\nSi el RUT ya existe en la DB Empresas:\n1. Envia email de alerta\n2. Notifica por Slack\n3. Responde 409 Conflict al webhook\n\nAccion manual requerida.",
+        "height": 220,
+        "width": 340,
+        "color": 7
+      },
+      "id": "sticky-duplicate-branch",
+      "name": "Nota - Rama Duplicado",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Rama: Nuevo Registro\n\nSi el RUT NO existe:\n1. Crea Empresa en Notion\n2. Crea Contacto en Notion (con relacion a Empresa)\n3. Envia email de bienvenida\n4. Notifica por Slack\n5. Responde 201 Created al webhook",
+        "height": 220,
+        "width": 340,
+        "color": 6
+      },
+      "id": "sticky-new-branch",
+      "name": "Nota - Rama Nuevo Registro",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - Alta Asociado": {
+      "main": [
+        [
+          {
+            "node": "Notion - Buscar RUT en Empresas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Buscar RUT en Empresas": {
+      "main": [
+        [
+          {
+            "node": "IF - RUT Ya Existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - RUT Ya Existe?": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Alerta RUT Duplicado",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack - Alerta Duplicado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion - Crear Empresa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Alerta RUT Duplicado": {
+      "main": [
+        [
+          {
+            "node": "Respond - Duplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Alerta Duplicado": {
+      "main": [
+        [
+          {
+            "node": "Respond - Duplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Crear Empresa": {
+      "main": [
+        [
+          {
+            "node": "Notion - Crear Contacto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Crear Contacto": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Confirmacion Registro",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack - Nuevo Asociado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Confirmacion Registro": {
+      "main": [
+        [
+          {
+            "node": "Respond - Exito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Nuevo Asociado": {
+      "main": [
+        [
+          {
+            "node": "Respond - Exito",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "fintechile-instance"
+  },
+  "tags": [
+    {
+      "name": "FTC-WF-001",
+      "id": "tag-ftc-wf-001"
+    },
+    {
+      "name": "alta-asociado",
+      "id": "tag-alta-asociado"
+    },
+    {
+      "name": "onboarding",
+      "id": "tag-onboarding"
+    }
+  ],
+  "pinData": {}
+}

@@ -1,0 +1,620 @@
+{
+  "name": "FTC-WF-010_health-check",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FTC-WF-010: Health Check del Sistema\n\n**Workflow ID:** FTC-WF-010\n**Nombre:** Health Check del Sistema\n**Version:** 1.0.0\n**Autor:** Ops FinteChile\n**Fecha:** 2025-01-01\n\n**Descripcion:**\nEjecuta un chequeo de salud periodico (cada 6 horas) de todos\nlos servicios criticos integrados: Notion API, Gmail API y Slack API.\nAgrega los resultados en un reporte de salud, envia alertas si\nalguno falla, y registra el resultado en Notion.\n\n**Trigger:** Schedule (cada 6 horas)\n**Servicios monitoreados:** Notion, Gmail, Slack\n**Alertas:** Gmail (admin), Slack (#ops)\n**Log:** Notion DB Catalogo de Automatizaciones\n\n**Variables de entorno:**\n- NOTION_DB_EMPRESAS_ID\n- NOTION_DB_AUTOMATIZACIONES_ID\n- SLACK_CHANNEL_OPS\n- EMAIL_FROM",
+        "height": 520,
+        "width": 400,
+        "color": 4
+      },
+      "id": "sticky-metadata",
+      "name": "Workflow Metadata",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Fase 1: Connectivity Checks\n\nCada nodo de check tiene `continueOnFail: true`\npara que el workflow continue incluso si el\nservicio esta caido.\n\n- Notion: Query DB Empresas (limit 1)\n- Gmail: Get user profile\n- Slack: auth.test",
+        "height": 200,
+        "width": 340,
+        "color": 6
+      },
+      "id": "sticky-phase1",
+      "name": "Nota - Fase Checks",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        440,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Fase 2: Evaluacion y Alertas\n\nEl nodo Code agrega resultados.\nSi alguno fallo:\n- Email de alerta al admin\n- Slack alert a #ops (si Slack funciona)\n\nSe registra el resultado en Notion\ncomo log de la ejecucion.",
+        "height": 200,
+        "width": 340,
+        "color": 7
+      },
+      "id": "sticky-phase2",
+      "name": "Nota - Fase Alertas",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1260,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule - Cada 6 Horas",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_EMPRESAS_ID }}",
+          "mode": "id"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "id": "check-notion",
+      "name": "Check Notion API",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        120
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "getProfile"
+      },
+      "id": "check-gmail",
+      "name": "Check Gmail API",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        520,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "test",
+        "operation": "test"
+      },
+      "id": "check-slack",
+      "name": "Check Slack API",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        480
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials",
+          "name": "Slack account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "noop-notion-error",
+      "name": "NoOp - Notion Error Handler",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        720,
+        120
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-gmail-error",
+      "name": "NoOp - Gmail Error Handler",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-slack-error",
+      "name": "NoOp - Slack Error Handler",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        720,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate Health Check Results\n// Collects outputs from all three API check nodes and builds a health report.\n\nconst now = new Date().toISOString();\n\n// --- Notion Check ---\nlet notion_status = 'OK';\nlet notion_error = null;\ntry {\n  const notionData = $('Check Notion API').first();\n  if (notionData.json.error || notionData.json.errorMessage) {\n    notion_status = 'FAIL';\n    notion_error = notionData.json.errorMessage || notionData.json.error || 'Unknown Notion error';\n  }\n} catch (e) {\n  notion_status = 'FAIL';\n  notion_error = e.message || 'Could not retrieve Notion check result';\n}\n\n// --- Gmail Check ---\nlet gmail_status = 'OK';\nlet gmail_error = null;\ntry {\n  const gmailData = $('Check Gmail API').first();\n  if (gmailData.json.error || gmailData.json.errorMessage) {\n    gmail_status = 'FAIL';\n    gmail_error = gmailData.json.errorMessage || gmailData.json.error || 'Unknown Gmail error';\n  }\n} catch (e) {\n  gmail_status = 'FAIL';\n  gmail_error = e.message || 'Could not retrieve Gmail check result';\n}\n\n// --- Slack Check ---\nlet slack_status = 'OK';\nlet slack_error = null;\ntry {\n  const slackData = $('Check Slack API').first();\n  if (slackData.json.error || slackData.json.errorMessage) {\n    slack_status = 'FAIL';\n    slack_error = slackData.json.errorMessage || slackData.json.error || 'Unknown Slack error';\n  }\n} catch (e) {\n  slack_status = 'FAIL';\n  slack_error = e.message || 'Could not retrieve Slack check result';\n}\n\n// --- Build report ---\nconst all_ok = (notion_status === 'OK' && gmail_status === 'OK' && slack_status === 'OK');\n\nconst failed_services = [];\nif (notion_status === 'FAIL') failed_services.push('Notion');\nif (gmail_status === 'FAIL') failed_services.push('Gmail');\nif (slack_status === 'FAIL') failed_services.push('Slack');\n\nconst status_summary = all_ok\n  ? 'ALL_OK - Todos los servicios operativos'\n  : `DEGRADED - Servicios con falla: ${failed_services.join(', ')}`;\n\nreturn [{\n  json: {\n    notion_status,\n    notion_error,\n    gmail_status,\n    gmail_error,\n    slack_status,\n    slack_error,\n    all_ok,\n    failed_services,\n    status_summary,\n    timestamp: now,\n    workflow_id: 'FTC-WF-010',\n    workflow_name: 'Health Check del Sistema'\n  }\n}];"
+      },
+      "id": "code-aggregate",
+      "name": "Code - Agregar Resultados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "any-check-failed",
+              "leftValue": "={{ $json.all_ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-any-failed",
+      "name": "IF - Algun Check Fallo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.EMAIL_FROM }}",
+        "subject": "=\u26a0\ufe0f Health Check Failed - {{ $json.failed_services.join(', ') }} - FinteChile",
+        "message": "=<html><body style=\"font-family: Arial, sans-serif; color: #333;\"><div style=\"max-width: 600px; margin: 0 auto;\"><div style=\"background-color: #c0392b; padding: 20px; text-align: center;\"><h1 style=\"color: #ffffff; margin: 0;\">\u26a0\ufe0f Health Check FAILED</h1></div><div style=\"padding: 30px; background-color: #f9f9f9;\"><h2>Reporte de Salud del Sistema - FinteChile</h2><p><strong>Timestamp:</strong> {{ $json.timestamp }}</p><p><strong>Estado General:</strong> <span style=\"color: #c0392b; font-weight: bold;\">{{ $json.status_summary }}</span></p><h3>Detalle por Servicio:</h3><table style=\"border-collapse: collapse; width: 100%;\" border=\"1\" cellpadding=\"8\"><tr style=\"background-color: #ecf0f1;\"><th>Servicio</th><th>Estado</th><th>Error</th></tr><tr><td>Notion API</td><td style=\"color: {{ $json.notion_status === 'OK' ? '#27ae60' : '#c0392b' }}; font-weight: bold;\">{{ $json.notion_status }}</td><td>{{ $json.notion_error || 'N/A' }}</td></tr><tr><td>Gmail API</td><td style=\"color: {{ $json.gmail_status === 'OK' ? '#27ae60' : '#c0392b' }}; font-weight: bold;\">{{ $json.gmail_status }}</td><td>{{ $json.gmail_error || 'N/A' }}</td></tr><tr><td>Slack API</td><td style=\"color: {{ $json.slack_status === 'OK' ? '#27ae60' : '#c0392b' }}; font-weight: bold;\">{{ $json.slack_status }}</td><td>{{ $json.slack_error || 'N/A' }}</td></tr></table><h3>Accion requerida:</h3><p>Revise los servicios con estado <strong>FAIL</strong> y verifique las credenciales, permisos y disponibilidad de la API.</p></div><div style=\"background-color: #eeeeee; padding: 15px; text-align: center; font-size: 12px;\"><p>FinteChile - Sistema de Monitoreo Automatizado</p><p>Workflow: FTC-WF-010 | Health Check del Sistema</p></div></div></body></html>",
+        "options": {
+          "senderName": "FinteChile Health Monitor",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-alert-admin",
+      "name": "Gmail - Alerta Health Check",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1460,
+        200
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "slack-still-working",
+              "leftValue": "={{ $json.slack_status }}",
+              "rightValue": "OK",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-slack-working",
+      "name": "IF - Slack Funciona?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_OPS }}",
+          "mode": "id"
+        },
+        "text": "=:rotating_light: *Health Check FAILED - FinteChile*\n\n*Timestamp:* {{ $json.timestamp }}\n*Estado:* {{ $json.status_summary }}\n\n*Detalle:*\n- Notion API: {{ $json.notion_status }} {{ $json.notion_status === 'FAIL' ? '(:x: ' + ($json.notion_error || 'Error desconocido') + ')' : ':white_check_mark:' }}\n- Gmail API: {{ $json.gmail_status }} {{ $json.gmail_status === 'FAIL' ? '(:x: ' + ($json.gmail_error || 'Error desconocido') + ')' : ':white_check_mark:' }}\n- Slack API: {{ $json.slack_status }} {{ $json.slack_status === 'FAIL' ? '(:x: ' + ($json.slack_error || 'Error desconocido') + ')' : ':white_check_mark:' }}\n\n:point_right: Accion requerida: Revisar servicios con falla.",
+        "otherOptions": {
+          "includeLinkToWorkflow": true
+        }
+      },
+      "id": "slack-alert-ops",
+      "name": "Slack - Alerta Health Check",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1720,
+        340
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "noop-slack-down",
+      "name": "NoOp - Slack Down (Email Only)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1720,
+        500
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-all-ok",
+      "name": "NoOp - All OK (No Alert)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1460,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_AUTOMATIZACIONES_ID }}",
+          "mode": "id"
+        },
+        "properties": {
+          "values": [
+            {
+              "key": "Nombre|title",
+              "title": "=Health Check - {{ $('Code - Agregar Resultados').item.json.timestamp }}"
+            },
+            {
+              "key": "Workflow ID|rich_text",
+              "richTextValue": "FTC-WF-010"
+            },
+            {
+              "key": "Estado|select",
+              "selectValue": "={{ $('Code - Agregar Resultados').item.json.all_ok ? 'OK' : 'FAIL' }}"
+            },
+            {
+              "key": "Resultado|rich_text",
+              "richTextValue": "={{ $('Code - Agregar Resultados').item.json.status_summary }}"
+            },
+            {
+              "key": "Detalle|rich_text",
+              "richTextValue": "=Notion: {{ $('Code - Agregar Resultados').item.json.notion_status }} | Gmail: {{ $('Code - Agregar Resultados').item.json.gmail_status }} | Slack: {{ $('Code - Agregar Resultados').item.json.slack_status }}{{ $('Code - Agregar Resultados').item.json.notion_error ? ' | Notion Error: ' + $('Code - Agregar Resultados').item.json.notion_error : '' }}{{ $('Code - Agregar Resultados').item.json.gmail_error ? ' | Gmail Error: ' + $('Code - Agregar Resultados').item.json.gmail_error : '' }}{{ $('Code - Agregar Resultados').item.json.slack_error ? ' | Slack Error: ' + $('Code - Agregar Resultados').item.json.slack_error : '' }}"
+            },
+            {
+              "key": "Fecha Ejecucion|date",
+              "dateValue": "={{ $('Code - Agregar Resultados').item.json.timestamp }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-log-result",
+      "name": "Notion - Log Health Check",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1960,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "noop-log-error",
+      "name": "NoOp - Log Error Handler",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2160,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule - Cada 6 Horas": {
+      "main": [
+        [
+          {
+            "node": "Check Notion API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Gmail API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Slack API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Notion API": {
+      "main": [
+        [
+          {
+            "node": "NoOp - Notion Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Gmail API": {
+      "main": [
+        [
+          {
+            "node": "NoOp - Gmail Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Slack API": {
+      "main": [
+        [
+          {
+            "node": "NoOp - Slack Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NoOp - Notion Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Code - Agregar Resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NoOp - Gmail Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Code - Agregar Resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NoOp - Slack Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Code - Agregar Resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Agregar Resultados": {
+      "main": [
+        [
+          {
+            "node": "IF - Algun Check Fallo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Algun Check Fallo?": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Alerta Health Check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF - Slack Funciona?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "NoOp - All OK (No Alert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Slack Funciona?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Alerta Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "NoOp - Slack Down (Email Only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Alerta Health Check": {
+      "main": [
+        [
+          {
+            "node": "Notion - Log Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Alerta Health Check": {
+      "main": [
+        [
+          {
+            "node": "Notion - Log Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NoOp - Slack Down (Email Only)": {
+      "main": [
+        [
+          {
+            "node": "Notion - Log Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NoOp - All OK (No Alert)": {
+      "main": [
+        [
+          {
+            "node": "Notion - Log Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Log Health Check": {
+      "main": [
+        [
+          {
+            "node": "NoOp - Log Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "fintechile-instance"
+  },
+  "tags": [
+    {
+      "name": "FTC-WF-010",
+      "id": "tag-ftc-wf-010"
+    },
+    {
+      "name": "health-check",
+      "id": "tag-health-check"
+    },
+    {
+      "name": "monitoring",
+      "id": "tag-monitoring"
+    },
+    {
+      "name": "ops",
+      "id": "tag-ops"
+    }
+  ],
+  "pinData": {}
+}

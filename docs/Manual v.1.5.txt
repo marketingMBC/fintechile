@@ -1,0 +1,321 @@
+Manual de la Master
+Documentación del Sistema de Gestión de Asociados y Partners
+1
+
+Alcance del Documento
+Propósito
+Documentar el funcionamiento actual de la Master que vive en Google Sheets, describiendo el flujo de datos, las hojas involucradas y las relaciones entre ellas.
+
+Objetivo: Facilitar la comprensión del sistema para su migración a Notion.
+Qué es la Master
+Sistema semi-automatizado de gestión basado en Google Sheets que registra y administra el ciclo completo de empresas postulantes a Asociado o Partner en FinteChile, desde el primer contacto hasta la eventual salida del programa.
+
+2
+
+Qué Cubre este Manual
+
+Flujo de Datos
+Cómo se mueven los datos entre hojas del sistema
+
+Estructura de Hojas
+Contenido y propósito de cada hoja
+
+Modelo Relacional
+Cómo se relacionan las hojas usando RUT como ID único
+
+Automatizaciones
+Qué es automático y qué requiere acción manual
+
+Casos Especiales
+Flujos alternativos y excepciones conocidas
+3
+
+Visión General del Sistema
+Formularios
+HubSpot
+Plataforma
+Pegado
+Prospección
+Nuevas
+Empresas
+Empresas
+(Activos)
+Renovación
+(Pagos)
+Contactos
+(Contrapartes)
+Salida Empresas
+Sistema Semi-automatizado: Utiliza Google Apps Script para traspasos entre hojas. Requiere confirmación manual de cada acción.
+4
+
+Modelo Relacional
+ID Único
+RUT Empresa
+EMPRESAS
+PROSPECCIÓN
+(1:1)
+NUEVAS
+EMPRESAS
+(1:1)
+RENOVACIÓN
+(1:N)
+CONTACTOS
+(1:N)
+El RUT conecta todas las hojas como identificador único
+• Empresas extranjeras usan número fiscal en lugar de RUT chileno
+5
+
+Ciclo de Vida del Miembro
+1
+Ingreso
+Form 1/2 → Pegado → Prospección
+2
+Aprobación
+Revisión → Aprobación Directorio
+3
+Formalización
+Nuevas Empresas → Pago + Firma
+4
+Vida Activa
+Empresas ↔ Renovación ↔ Contactos
+5
+Salida
+'No Renovará' → Salida Empresas
+6
+
+Tipos de Membresía
+Asociado
+Empresas Fintech o Startups
+Tarifas (según ventas anuales):
+• Pequeña (< 25.000 UF): 24 UF
+• Mediana (< 100.000 UF): 44 UF
+• Grande (> 100.000 UF): 68 UF
+Partner
+Empresas tradicionales no-fintech
+Tarifas (según ventas anuales):
+• Pequeña (< 25.000 UF): 50 UF + IVA
+• Mediana (< 100.000 UF): 100 UF + IVA
+• Grande (> 100.000 UF): 150 UF + IVA
+Empresas extranjeras: Solo pueden ser Partner (150 UF sin IVA)
+Ejemplos:
+• Asociado: Empresa de pagos digitales, plataforma de préstamos, billetera digital
+• Partner: Bufete de abogados, empresa de ciberseguridad, consultora tecnológica
+7
+
+Plataforma de Pegado
+Paso actual: Workaround para ingreso manual de datos desde HubSpot
+Propósito
+Recibir datos copiados manualmente desde correos de HubSpot, validarlos y enviarlos a Prospección.
+Funciones
+• Validar formato RUT
+• Validar fecha de postulación
+• Validar tipo de membresía
+• Botón 'Ingresar' ejecuta script
+Dependencia Técnica
+Requiere Google Apps Script para ejecutar el traspaso. Se debe esperar mensaje de confirmación antes de realizar otra acción.
+→ Salida: Todos los datos pasan a la hoja Prospección
+8
+
+Prospección (1/2)
+Estado: Empresa interesada en ser miembro, aún no aprobada
+Flujo Interno del Proceso
+1. Form 1 completado
+2. Invitación a Reunión + Form 2
+3. Reunión Comercial realizada
+4. Form 2 completado
+5. Revisado por equipo interno
+6. Enviado a Directorio
+7. Aprobado por Directorio
+9
+
+Prospección (2/2)
+Campos de Seguimiento
+Última acción
+[Manual]
+Fecha última acción
+[Manual]
+Siguiente acción
+[Automático]
+Categorías de Datos (53 columnas)
+• Identificación: RUT, Razón Social
+• Contactos: Nombre, Correo, Teléfono, LinkedIn
+• Representante Legal: Datos completos
+• Contrapartes: Marketing, Finanzas, Principal
+• Empresa: Vertical, Giro, Sitio Web
+• Motivación: Interés, Expectativas
+• Estructura: Dueños, Nº empleados, Año constitución
+→ Transición: Si aprobado → pasa a Nuevas Empresas
+10
+
+Nuevas Empresas (1/2)
+Estado: Empresa aprobada, formalizando ingreso (pago + contrato)
+Flujo de Formalización
+1. Correo con siguientes pasos
+2. Contrato enviado (DocuSign)
+3. Contrato firmado
+4. Emisión documento de cobro
+5. Pagado
+6. Onboarding completado
+11
+
+Nuevas Empresas (2/2)
+Datos que se Registran
+• Tamaño empresa
+• Año de ingreso
+• Mes de ingreso
+• Valor pagado (CLP)
+• Estado del proceso
+• Fecha última acción
+Validaciones Requeridas
+No puede pasar a Empresas si:
+
+• Faltan datos obligatorios
+• No hay aprobación manual
+• Pago no confirmado
+• Contrato no firmado
+→ Transición: Pago confirmado Y contrato firmado → pasa a Empresas
+12
+
+Empresas (1/2)
+Estado: Miembro activo de FinteChile - Ficha consolidada
+Propósito
+Esta es la hoja central del sistema. Contiene la ficha completa de cada miembro activo con todos los datos estructurales de la empresa.
+Dato Foráneo Clave
+El TAMAÑO de la empresa NO se modifica aquí. Se actualiza automáticamente desde la hoja Renovación según el último pago registrado.
+Función en el Sistema
+Actúa como base de datos principal de miembros activos. Todas las demás hojas se relacionan con esta usando el RUT como ID único.
+13
+
+Empresas (2/2) - Datos
+Identificación
+RUT
+Razón Social
+Nombre
+Membresía
+Dimensiones
+Tamaño*
+Año ingreso
+Mes ingreso
+Nº empleados
+Clasificación
+Vertical
+Giro
+Descripción
+Año constitución
+Presencia Online
+Sitio Web
+LinkedIn
+Dominio
+Gestión Interna
+Contacto principal
+KAM asignado
+Último seguimiento
+Histórico
+Interés inicial
+Motivación
+Expectativas
+Cómo conoció FinteChile
+* Tamaño se actualiza automáticamente desde Renovación
+14
+
+Renovación (1/2)
+Entidad Transaccional: Cada fila = un pago específico
+Propósito
+Registrar todos los pagos (primer pago y renovaciones anuales posteriores). Controla el tamaño actual de cada empresa.
+Campos Principales
+Año del Pago:
+Manual
+Mes de Renovación:
+Manual
+ID Empresa (RUT):
+Desde Empresas
+Nombre Empresa:
+Desde Empresas
+Valor Pagado CLP:
+Manual
+Tamaño:
+Manual
+Fecha de Renovación:
+Manual
+Estado Pago:
+Automático 
+Seguimiento Pago:
+Manual
+15
+
+Renovación (2/2) - Estados
+Estados de Pago (Automáticos)
+Al día
+Pago vigente y activo
+Próximo a renovar
+Se acerca la fecha de renovación
+Atrasado
+Pasó la fecha sin pagar
+Funciones Clave en el Sistema
+• Controla el tamaño actual de la empresa (visible en hoja Empresas)
+• Calcula automáticamente el estado de cada pago
+• Dispara el proceso de salida cuando Seguimiento = 'No Renovará'
+16
+
+Contactos
+Relación: 1:N - Una empresa puede tener múltiples contactos
+Propósito
+Registrar personas de contacto (contrapartes) asociadas a cada empresa. Provienen de formularios o se agregan manualmente.
+Estructura de Datos
+Identificadores:
+ID Empresa (RUT), Correo (ID Contacto)
+Empresa:
+Membresía, Nombre Empresa
+Persona:
+Nombre, Cargo, Teléfono, LinkedIn, RUT, Nacionalidad, Profesión
+Tipo de Contraparte:
+Principal, Marketing, Finanzas, etc.
+17
+
+Salida Empresas
+Estado: Ex-miembro - Empresa que decidió no renovar
+Disparador del Proceso
+En hoja Renovación: Seguimiento Pago = 'No Renovará'
+Proceso de Salida
+1
+Aparece mensaje de confirmación
+2
+Eliminación en hojas activas (Empresas, Renovación, Contactos)
+3
+Conservación histórica completa en Salida Empresas
+Propósito: Mantener histórico completo sin contaminar hojas de miembros activos
+18
+
+Resumen de Salida
+Propósito
+Hoja complementaria a Salida Empresas que consolida información resumida de empresas que abandonaron FinteChile, facilitando análisis histórico y reportes sin necesidad de revisar datos detallados.
+Relación con Salida Empresas
+Salida Empresas
+• Contiene datos detallados
+• Histórico completo
+• Múltiples columnas
+Resumen de Salida
+• Datos consolidados
+• Vista simplificada
+• Para análisis rápido
+Información que se Conserva
+• Identificación: RUT, Razón Social, Nombre
+• Membresía: Tipo (Asociado/Partner)
+• Temporalidad: Año ingreso, Fecha salida, Tiempo como miembro
+• Contacto principal registrado
+19
+
+Resumen del Sistema
+RUT como ID único conecta todas las hojas
+8 hojas: Pegado → Prospección → Nuevas → Empresas → Renovación/Contactos → Salida/Resumen
+Sistema semi-automatizado: Apps Script + acciones manuales
+Renovación controla tamaño actual en Empresas
+Relación 1:1: Prospección y Nuevas Empresas (histórico)
+Relación 1:N: Renovación (pagos) y Contactos (personas)
+Salida automática desde trigger en Renovación
+20
+
+Master 3.0
+Manual de Sistema
+Fin del documento
+21

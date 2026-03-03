@@ -1,0 +1,490 @@
+{
+  "name": "FTC-WF-009_onboarding-miembro",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FTC-WF-009 | Onboarding de Nuevo Miembro\n\n**Descripcion:** Automatiza el proceso de onboarding cuando una empresa cambia su estado a \"Activo\" en la base de datos de Empresas. Envia email de bienvenida, crea tareas de seguimiento y notifica al equipo via Slack.\n\n**Owner:** Operaciones\n**Folder:** /Operaciones\n**Criticidad:** Media\n**Fecha de creacion:** 2025-02-18\n**Version:** 1.0.0\n\n**Trigger:** Polling cada 5 minutos sobre Notion DB Empresas (Estado = Activo)\n\n**Dependencias:**\n- Notion: DB Empresas, DB Contactos, DB Tareas\n- Gmail: Cuenta corporativa FinteChile\n- Slack: Canal #ops-fintechile\n\n**Variables de entorno requeridas:**\n- NOTION_DB_EMPRESAS_ID\n- NOTION_DB_CONTACTOS_ID\n- NOTION_DB_TAREAS_ID\n- SLACK_CHANNEL_OPS\n- EMAIL_FROM",
+        "height": 520,
+        "width": 420,
+        "color": 4
+      },
+      "id": "sticky-metadata",
+      "name": "Workflow Metadata",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 5,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "event": "pagedUpdated",
+        "simple": true,
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_EMPRESAS_ID }}",
+          "mode": "id"
+        },
+        "conditions": {
+          "options": [
+            {
+              "key": "Estado",
+              "type": "select",
+              "condition": "equals",
+              "returnType": "string",
+              "value": "Activo"
+            }
+          ]
+        }
+      },
+      "id": "notion-trigger",
+      "name": "Trigger: Empresa Activa",
+      "type": "n8n-nodes-base.notionTrigger",
+      "typeVersion": 1,
+      "position": [
+        340,
+        260
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_CONTACTOS_ID }}",
+          "mode": "id"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Empresa",
+              "type": "relation",
+              "condition": "contains",
+              "returnType": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "key": "Tipo",
+              "type": "select",
+              "condition": "equals",
+              "returnType": "string",
+              "value": "Principal"
+            }
+          ],
+          "combinator": "AND"
+        },
+        "simple": true
+      },
+      "id": "get-contacto",
+      "name": "Get Contacto Principal",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        580,
+        260
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.properties.Email.email || $json.properties.Email.rich_text?.[0]?.plain_text || '' }}",
+        "subject": "Bienvenido/a a FinteChile - {{ $('Trigger: Empresa Activa').item.json.properties.Nombre.title[0].plain_text }}",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n</head>\n<body style=\"margin:0; padding:0; background-color:#f4f6f9; font-family:'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#f4f6f9;\">\n    <tr>\n      <td align=\"center\" style=\"padding:40px 20px;\">\n        <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.08);\">\n          \n          <!-- Header -->\n          <tr>\n            <td style=\"background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%); padding:40px 40px 30px; text-align:center;\">\n              <h1 style=\"color:#ffffff; margin:0 0 8px; font-size:28px; font-weight:700; letter-spacing:-0.5px;\">FinteChile</h1>\n              <p style=\"color:rgba(255,255,255,0.85); margin:0; font-size:14px; text-transform:uppercase; letter-spacing:2px;\">Asociacion Fintech de Chile</p>\n            </td>\n          </tr>\n          \n          <!-- Welcome Badge -->\n          <tr>\n            <td align=\"center\" style=\"padding:30px 40px 10px;\">\n              <div style=\"display:inline-block; background-color:#e8f5e9; color:#2e7d32; padding:8px 24px; border-radius:20px; font-size:14px; font-weight:600;\">\n                Nuevo Miembro Activo\n              </div>\n            </td>\n          </tr>\n          \n          <!-- Body -->\n          <tr>\n            <td style=\"padding:20px 40px 30px;\">\n              <h2 style=\"color:#1a237e; margin:0 0 16px; font-size:22px;\">Bienvenido/a a FinteChile</h2>\n              <p style=\"color:#424242; font-size:15px; line-height:1.7; margin:0 0 16px;\">\n                Estimado/a <strong>{{ $json.properties.Nombre?.title?.[0]?.plain_text || $json.properties.Nombre?.rich_text?.[0]?.plain_text || 'Miembro' }}</strong>,\n              </p>\n              <p style=\"color:#424242; font-size:15px; line-height:1.7; margin:0 0 16px;\">\n                Es un placer confirmar que <strong>{{ $('Trigger: Empresa Activa').item.json.properties.Nombre.title[0].plain_text }}</strong> es ahora miembro activo de FinteChile. Estamos encantados de contar con ustedes en nuestro ecosistema fintech.\n              </p>\n              <p style=\"color:#424242; font-size:15px; line-height:1.7; margin:0 0 24px;\">\n                A continuacion, encontrara los recursos esenciales para comenzar:\n              </p>\n              \n              <!-- Resource Cards -->\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin-bottom:24px;\">\n                <tr>\n                  <td style=\"background-color:#f5f7ff; border-radius:8px; padding:20px; border-left:4px solid #1a237e; margin-bottom:12px;\">\n                    <p style=\"margin:0 0 6px; font-size:13px; color:#5c6bc0; font-weight:600; text-transform:uppercase; letter-spacing:1px;\">Guia de Bienvenida</p>\n                    <p style=\"margin:0; font-size:14px; color:#424242;\">Descargue nuestra guia completa con toda la informacion que necesita como nuevo miembro.</p>\n                    <a href=\"https://drive.google.com/fintechile/guia-bienvenida\" style=\"display:inline-block; margin-top:10px; color:#1a237e; font-size:14px; font-weight:600; text-decoration:none;\">Acceder a la guia &rarr;</a>\n                  </td>\n                </tr>\n                <tr><td style=\"height:12px;\"></td></tr>\n                <tr>\n                  <td style=\"background-color:#f5f7ff; border-radius:8px; padding:20px; border-left:4px solid #0d47a1;\">\n                    <p style=\"margin:0 0 6px; font-size:13px; color:#5c6bc0; font-weight:600; text-transform:uppercase; letter-spacing:1px;\">Portal de Miembros</p>\n                    <p style=\"margin:0; font-size:14px; color:#424242;\">Acceda al portal exclusivo de miembros para eventos, recursos y networking.</p>\n                    <a href=\"https://miembros.fintechile.org\" style=\"display:inline-block; margin-top:10px; color:#1a237e; font-size:14px; font-weight:600; text-decoration:none;\">Ir al portal &rarr;</a>\n                  </td>\n                </tr>\n              </table>\n              \n              <!-- Assigned Executive -->\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#fff8e1; border-radius:8px; padding:20px; margin-bottom:24px;\">\n                <tr>\n                  <td style=\"padding:20px;\">\n                    <p style=\"margin:0 0 8px; font-size:13px; color:#f57f17; font-weight:600; text-transform:uppercase; letter-spacing:1px;\">Su Ejecutivo/a Asignado/a</p>\n                    <p style=\"margin:0 0 4px; font-size:16px; color:#424242; font-weight:600;\">{{ $('Trigger: Empresa Activa').item.json.properties.KAM?.people?.[0]?.name || 'Equipo FinteChile' }}</p>\n                    <p style=\"margin:0; font-size:14px; color:#757575;\">Su punto de contacto para cualquier consulta o requerimiento. Le contactara en los proximos dias para agendar una reunion de bienvenida.</p>\n                  </td>\n                </tr>\n              </table>\n              \n              <!-- Next Steps -->\n              <h3 style=\"color:#1a237e; margin:0 0 12px; font-size:16px;\">Proximos Pasos</h3>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                <tr>\n                  <td style=\"padding:8px 0; border-bottom:1px solid #e0e0e0;\">\n                    <span style=\"display:inline-block; background-color:#1a237e; color:#ffffff; width:24px; height:24px; border-radius:50%; text-align:center; line-height:24px; font-size:12px; font-weight:700; margin-right:12px; vertical-align:middle;\">1</span>\n                    <span style=\"color:#424242; font-size:14px; vertical-align:middle;\">Reunion de bienvenida con su ejecutivo asignado</span>\n                  </td>\n                </tr>\n                <tr>\n                  <td style=\"padding:8px 0; border-bottom:1px solid #e0e0e0;\">\n                    <span style=\"display:inline-block; background-color:#1a237e; color:#ffffff; width:24px; height:24px; border-radius:50%; text-align:center; line-height:24px; font-size:12px; font-weight:700; margin-right:12px; vertical-align:middle;\">2</span>\n                    <span style=\"color:#424242; font-size:14px; vertical-align:middle;\">Acceso a canales de comunicacion (Slack y newsletter)</span>\n                  </td>\n                </tr>\n                <tr>\n                  <td style=\"padding:8px 0;\">\n                    <span style=\"display:inline-block; background-color:#1a237e; color:#ffffff; width:24px; height:24px; border-radius:50%; text-align:center; line-height:24px; font-size:12px; font-weight:700; margin-right:12px; vertical-align:middle;\">3</span>\n                    <span style=\"color:#424242; font-size:14px; vertical-align:middle;\">Recepcion del kit de marca FinteChile</span>\n                  </td>\n                </tr>\n              </table>\n            </td>\n          </tr>\n          \n          <!-- Footer -->\n          <tr>\n            <td style=\"background-color:#f5f7ff; padding:24px 40px; text-align:center; border-top:1px solid #e8eaf6;\">\n              <p style=\"margin:0 0 8px; font-size:13px; color:#757575;\">\n                FinteChile - Asociacion Fintech de Chile\n              </p>\n              <p style=\"margin:0; font-size:12px; color:#9e9e9e;\">\n                Este email fue enviado automaticamente como parte del proceso de onboarding.\n              </p>\n            </td>\n          </tr>\n          \n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>",
+        "options": {
+          "senderName": "FinteChile",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "send-welcome-email",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        820,
+        60
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_TAREAS_ID }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Nombre",
+              "title": "Agendar reunion de bienvenida - {{ $('Trigger: Empresa Activa').item.json.properties.Nombre.title[0].plain_text }}"
+            },
+            {
+              "key": "Estado",
+              "selectValue": "Pendiente"
+            },
+            {
+              "key": "Prioridad",
+              "selectValue": "Alta"
+            },
+            {
+              "key": "Asignado",
+              "peopleValue": [
+                "={{ $('Trigger: Empresa Activa').item.json.properties.KAM?.people?.[0]?.id || '' }}"
+              ]
+            },
+            {
+              "key": "Empresa",
+              "relationValue": [
+                "={{ $('Trigger: Empresa Activa').item.json.id }}"
+              ]
+            },
+            {
+              "key": "Fecha Limite",
+              "dateValue": "={{ new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}"
+            },
+            {
+              "key": "Categoria",
+              "selectValue": "Onboarding"
+            }
+          ]
+        },
+        "simple": true
+      },
+      "id": "create-task-reunion",
+      "name": "Task 1: Agendar Reunion Bienvenida",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        820,
+        260
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_TAREAS_ID }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Nombre",
+              "title": "Enviar kit de marca FinteChile - {{ $('Trigger: Empresa Activa').item.json.properties.Nombre.title[0].plain_text }}"
+            },
+            {
+              "key": "Estado",
+              "selectValue": "Pendiente"
+            },
+            {
+              "key": "Prioridad",
+              "selectValue": "Media"
+            },
+            {
+              "key": "Asignado",
+              "selectValue": "Comunicaciones"
+            },
+            {
+              "key": "Empresa",
+              "relationValue": [
+                "={{ $('Trigger: Empresa Activa').item.json.id }}"
+              ]
+            },
+            {
+              "key": "Fecha Limite",
+              "dateValue": "={{ new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}"
+            },
+            {
+              "key": "Categoria",
+              "selectValue": "Onboarding"
+            }
+          ]
+        },
+        "simple": true
+      },
+      "id": "create-task-kit",
+      "name": "Task 2: Enviar Kit de Marca",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        820,
+        460
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_TAREAS_ID }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Nombre",
+              "title": "Agregar a canal Slack - {{ $('Trigger: Empresa Activa').item.json.properties.Nombre.title[0].plain_text }}"
+            },
+            {
+              "key": "Estado",
+              "selectValue": "Pendiente"
+            },
+            {
+              "key": "Prioridad",
+              "selectValue": "Alta"
+            },
+            {
+              "key": "Asignado",
+              "selectValue": "Operaciones"
+            },
+            {
+              "key": "Empresa",
+              "relationValue": [
+                "={{ $('Trigger: Empresa Activa').item.json.id }}"
+              ]
+            },
+            {
+              "key": "Fecha Limite",
+              "dateValue": "={{ new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}"
+            },
+            {
+              "key": "Categoria",
+              "selectValue": "Onboarding"
+            }
+          ]
+        },
+        "simple": true
+      },
+      "id": "create-task-slack",
+      "name": "Task 3: Agregar a Canal Slack",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        820,
+        660
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "channel": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_OPS }}",
+          "mode": "id"
+        },
+        "messageType": "block",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": ":tada: Nuevo Miembro Activo"
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "*Empresa:* {{ $('Trigger: Empresa Activa').item.json.properties.Nombre.title[0].plain_text }}\n*Contacto Principal:* {{ $('Get Contacto Principal').item.json.properties.Nombre?.title?.[0]?.plain_text || $('Get Contacto Principal').item.json.properties.Nombre?.rich_text?.[0]?.plain_text || 'Por definir' }}\n*KAM Asignado:* {{ $('Trigger: Empresa Activa').item.json.properties.KAM?.people?.[0]?.name || 'Por asignar' }}\n*Fecha Activacion:* {{ new Date().toLocaleDateString('es-CL', { year: 'numeric', month: 'long', day: 'numeric' }) }}"
+              }
+            },
+            {
+              "type": "divider"
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": ":white_check_mark: Email de bienvenida enviado\n:memo: 3 tareas de onboarding creadas en Notion\n\n_Workflow: FTC-WF-009_onboarding-miembro_"
+              }
+            }
+          ]
+        },
+        "otherOptions": {
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "id": "slack-notification",
+      "name": "Slack: Notificar Nuevo Miembro",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        260
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credentials",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Trigger: Empresa Activa": {
+      "main": [
+        [
+          {
+            "node": "Get Contacto Principal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contacto Principal": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Task 1: Agendar Reunion Bienvenida",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Task 2: Enviar Kit de Marca",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Task 3: Agregar a Canal Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Welcome Email": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notificar Nuevo Miembro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task 1: Agendar Reunion Bienvenida": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notificar Nuevo Miembro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task 2: Enviar Kit de Marca": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notificar Nuevo Miembro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task 3: Agregar a Canal Slack": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notificar Nuevo Miembro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Santiago",
+    "saveExecutionProgress": true
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "tags": [
+    {
+      "name": "Operaciones"
+    },
+    {
+      "name": "Onboarding"
+    },
+    {
+      "name": "FinteChile"
+    }
+  ],
+  "pinData": {}
+}

@@ -1,0 +1,357 @@
+{
+  "name": "FTC-WF-006_alerta-tareas-vencidas",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger-001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        460,
+        300
+      ],
+      "notes": "Ejecuta diariamente a las 09:30 hora Chile (America/Santiago)"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_TAREAS_ID }}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filterJson": "{\n  \"and\": [\n    {\n      \"property\": \"fecha_limite\",\n      \"date\": {\n        \"before\": \"{{ $now.toISO() }}\"\n      }\n    },\n    {\n      \"property\": \"estado\",\n      \"select\": {\n        \"does_not_equal\": \"Hecho\"\n      }\n    },\n    {\n      \"property\": \"estado\",\n      \"select\": {\n        \"does_not_equal\": \"Backlog\"\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "notion-query-001",
+      "name": "Query Tareas Vencidas",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-001",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Consulta la DB Tareas: fecha_limite < hoy AND estado != Hecho AND estado != Backlog"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agrupar tareas vencidas por persona asignada\nconst items = $input.all();\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\n\nconst grouped = {};\n\nfor (const item of items) {\n  const props = item.json.properties || item.json;\n\n  // Extraer nombre del asignado\n  let asignado = 'Sin asignar';\n  let asignadoEmail = '';\n  if (props.Asignado && props.Asignado.people && props.Asignado.people.length > 0) {\n    asignado = props.Asignado.people[0].name || 'Sin asignar';\n    asignadoEmail = props.Asignado.people[0].person?.email || '';\n  }\n\n  // Extraer nombre de la tarea\n  let taskName = 'Sin nombre';\n  if (props.Name && props.Name.title && props.Name.title.length > 0) {\n    taskName = props.Name.title.map(t => t.plain_text).join('');\n  } else if (props.Nombre && props.Nombre.title && props.Nombre.title.length > 0) {\n    taskName = props.Nombre.title.map(t => t.plain_text).join('');\n  }\n\n  // Extraer fecha limite\n  let fechaLimite = null;\n  let fechaLimiteStr = '';\n  let daysOverdue = 0;\n  if (props.fecha_limite && props.fecha_limite.date) {\n    fechaLimiteStr = props.fecha_limite.date.start || '';\n    fechaLimite = new Date(fechaLimiteStr);\n    fechaLimite.setHours(0, 0, 0, 0);\n    daysOverdue = Math.floor((today - fechaLimite) / (1000 * 60 * 60 * 24));\n  }\n\n  // Extraer prioridad\n  let prioridad = 'Sin prioridad';\n  if (props.Prioridad && props.Prioridad.select) {\n    prioridad = props.Prioridad.select.name || 'Sin prioridad';\n  } else if (props.prioridad && props.prioridad.select) {\n    prioridad = props.prioridad.select.name || 'Sin prioridad';\n  }\n\n  // Extraer estado\n  let estado = '';\n  if (props.estado && props.estado.select) {\n    estado = props.estado.select.name || '';\n  } else if (props.Estado && props.Estado.select) {\n    estado = props.Estado.select.name || '';\n  }\n\n  // Extraer URL de la tarea en Notion\n  const taskUrl = item.json.url || '';\n\n  const task = {\n    taskName,\n    fechaLimiteStr,\n    daysOverdue,\n    prioridad,\n    estado,\n    taskUrl\n  };\n\n  const key = asignadoEmail || asignado;\n  if (!grouped[key]) {\n    grouped[key] = {\n      asignado,\n      asignadoEmail,\n      tasks: []\n    };\n  }\n  grouped[key].tasks.push(task);\n}\n\n// Convertir a array de items para n8n\nconst result = Object.values(grouped).map(group => {\n  // Ordenar tareas por dias de atraso (mayor primero)\n  group.tasks.sort((a, b) => b.daysOverdue - a.daysOverdue);\n  return {\n    json: {\n      asignado: group.asignado,\n      asignadoEmail: group.asignadoEmail,\n      totalTareas: group.tasks.length,\n      tasks: group.tasks,\n      hasCritical: group.tasks.some(t => t.daysOverdue > 3)\n    }\n  };\n});\n\nreturn result;"
+      },
+      "id": "code-group-001",
+      "name": "Agrupar por Asignado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "notes": "Agrupa las tareas vencidas por persona asignada, calcula dias de atraso y ordena por prioridad"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "split-batches-001",
+      "name": "Loop por Asignado",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        300
+      ],
+      "notes": "Itera sobre cada persona asignada para enviar notificacion personalizada"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construir email HTML personalizado para cada responsable\nconst item = $input.first().json;\nconst asignado = item.asignado;\nconst tasks = item.tasks;\nconst totalTareas = item.totalTareas;\n\n// Construir filas de la tabla de tareas\nlet tableRows = '';\nfor (const task of tasks) {\n  const priorityColor = {\n    'Alta': '#dc3545',\n    'Media': '#fd7e14',\n    'Baja': '#28a745',\n    'Urgente': '#721c24',\n    'Critica': '#721c24'\n  }[task.prioridad] || '#6c757d';\n\n  const daysColor = task.daysOverdue > 3 ? '#dc3545' : (task.daysOverdue > 1 ? '#fd7e14' : '#333');\n\n  const taskLink = task.taskUrl\n    ? `<a href=\"${task.taskUrl}\" style=\"color:#0366d6;text-decoration:none;\">${task.taskName}</a>`\n    : task.taskName;\n\n  tableRows += `\n    <tr>\n      <td style=\"padding:10px 12px;border-bottom:1px solid #e9ecef;\">${taskLink}</td>\n      <td style=\"padding:10px 12px;border-bottom:1px solid #e9ecef;text-align:center;\">${task.fechaLimiteStr}</td>\n      <td style=\"padding:10px 12px;border-bottom:1px solid #e9ecef;text-align:center;color:${daysColor};font-weight:bold;\">${task.daysOverdue} dia(s)</td>\n      <td style=\"padding:10px 12px;border-bottom:1px solid #e9ecef;text-align:center;\"><span style=\"background:${priorityColor};color:white;padding:3px 10px;border-radius:12px;font-size:12px;\">${task.prioridad}</span></td>\n      <td style=\"padding:10px 12px;border-bottom:1px solid #e9ecef;text-align:center;\">${task.estado}</td>\n    </tr>`;\n}\n\nconst criticalCount = tasks.filter(t => t.daysOverdue > 3).length;\nconst criticalBanner = criticalCount > 0\n  ? `<div style=\"background:#fff3cd;border-left:4px solid #dc3545;padding:12px 16px;margin-bottom:20px;border-radius:4px;\">\n      <strong>Atencion:</strong> Tienes <strong>${criticalCount}</strong> tarea(s) con mas de 3 dias de atraso. Estas seran escaladas al equipo ejecutivo.\n    </div>`\n  : '';\n\nconst htmlBody = `\n<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family:'Segoe UI',Arial,sans-serif;background:#f4f6f9;margin:0;padding:20px;\">\n  <div style=\"max-width:700px;margin:0 auto;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);\">\n    <div style=\"background:#1a1a2e;padding:24px 32px;\">\n      <h1 style=\"color:white;margin:0;font-size:22px;\">Alerta de Tareas Vencidas</h1>\n      <p style=\"color:#a0a0c0;margin:6px 0 0;font-size:14px;\">FinteChile - Reporte Diario</p>\n    </div>\n    <div style=\"padding:24px 32px;\">\n      <p style=\"color:#333;font-size:15px;\">Hola <strong>${asignado}</strong>,</p>\n      <p style=\"color:#555;font-size:14px;\">Tienes <strong>${totalTareas}</strong> tarea(s) vencida(s) que requieren tu atencion:</p>\n      ${criticalBanner}\n      <table style=\"width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;\">\n        <thead>\n          <tr style=\"background:#f8f9fa;\">\n            <th style=\"padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;color:#495057;\">Tarea</th>\n            <th style=\"padding:10px 12px;text-align:center;border-bottom:2px solid #dee2e6;color:#495057;\">Fecha Limite</th>\n            <th style=\"padding:10px 12px;text-align:center;border-bottom:2px solid #dee2e6;color:#495057;\">Dias Atraso</th>\n            <th style=\"padding:10px 12px;text-align:center;border-bottom:2px solid #dee2e6;color:#495057;\">Prioridad</th>\n            <th style=\"padding:10px 12px;text-align:center;border-bottom:2px solid #dee2e6;color:#495057;\">Estado</th>\n          </tr>\n        </thead>\n        <tbody>\n          ${tableRows}\n        </tbody>\n      </table>\n      <p style=\"color:#555;font-size:14px;margin-top:20px;\">Por favor, actualiza el estado de estas tareas en <a href=\"https://www.notion.so\" style=\"color:#0366d6;\">Notion</a> lo antes posible.</p>\n    </div>\n    <div style=\"background:#f8f9fa;padding:16px 32px;border-top:1px solid #e9ecef;\">\n      <p style=\"color:#999;font-size:12px;margin:0;\">Este es un mensaje automatico generado por el sistema de gestion de tareas de FinteChile. No responder a este correo.</p>\n    </div>\n  </div>\n</body>\n</html>`;\n\nconst subject = `[FinteChile] Tienes ${totalTareas} tarea(s) vencida(s)${criticalCount > 0 ? ' - CRITICO' : ''}`;\n\nreturn [{\n  json: {\n    asignado: item.asignado,\n    asignadoEmail: item.asignadoEmail,\n    totalTareas: item.totalTareas,\n    tasks: item.tasks,\n    hasCritical: item.hasCritical,\n    emailSubject: subject,\n    emailBody: htmlBody\n  }\n}];"
+      },
+      "id": "code-email-001",
+      "name": "Construir Email Personalizado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ],
+      "notes": "Genera email HTML personalizado con tabla de tareas vencidas, prioridad y dias de atraso"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.asignadoEmail }}",
+        "subject": "={{ $json.emailSubject }}",
+        "emailType": "html",
+        "message": "={{ $json.emailBody }}",
+        "options": {
+          "senderName": "FinteChile - Gestion de Tareas",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-send-001",
+      "name": "Enviar Email al Responsable",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-cred-001",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Envia email personalizado con tareas vencidas al responsable asignado"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-critical-001",
+              "leftValue": "={{ $json.hasCritical }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critical-001",
+      "name": "Tarea > 3 dias vencida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ],
+      "notes": "Verifica si alguna tarea tiene mas de 3 dias de atraso para escalar"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recopilar TODAS las tareas criticas (>3 dias) de todos los items procesados\n// Este nodo recibe el item actual que tiene hasCritical = true\nconst item = $input.first().json;\nconst tasks = item.tasks || [];\nconst criticalTasks = tasks.filter(t => t.daysOverdue > 3);\n\nconst today = new Date().toLocaleDateString('es-CL', {\n  weekday: 'long',\n  year: 'numeric',\n  month: 'long',\n  day: 'numeric'\n});\n\nlet taskBlocks = '';\nfor (const task of criticalTasks) {\n  const priorityEmoji = {\n    'Urgente': ':rotating_light:',\n    'Critica': ':rotating_light:',\n    'Alta': ':red_circle:',\n    'Media': ':large_orange_circle:',\n    'Baja': ':large_green_circle:'\n  }[task.prioridad] || ':white_circle:';\n\n  const taskLink = task.taskUrl ? `<${task.taskUrl}|${task.taskName}>` : task.taskName;\n\n  taskBlocks += `\\n${priorityEmoji} *${taskLink}*\\n    Responsable: *${item.asignado}* | Vencida: ${task.fechaLimiteStr} | *${task.daysOverdue} dias de atraso* | Prioridad: ${task.prioridad} | Estado: ${task.estado}\\n`;\n}\n\nconst slackMessage = `:warning: *ALERTA DE ESCALAMIENTO - Tareas Criticas Vencidas*\\n_${today}_\\n\\n:bust_in_silhouette: *${item.asignado}* tiene ${criticalTasks.length} tarea(s) con mas de 3 dias de atraso:\\n${taskBlocks}\\n---\\n:point_right: Se requiere atencion inmediata. Por favor, coordinar con el responsable para resolver estas tareas.`;\n\nreturn [{\n  json: {\n    slackMessage,\n    criticalCount: criticalTasks.length,\n    asignado: item.asignado\n  }\n}];"
+      },
+      "id": "code-slack-001",
+      "name": "Construir Mensaje Slack Escalamiento",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        200
+      ],
+      "notes": "Construye mensaje de escalamiento para Slack con las tareas criticas (>3 dias de atraso)"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_CHANNEL_EJECUTIVO }}"
+        },
+        "text": "={{ $json.slackMessage }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "id": "slack-send-001",
+      "name": "Slack Alerta Escalamiento",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        2220,
+        200
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-cred-001",
+          "name": "Slack account"
+        }
+      },
+      "notes": "Envia alerta de escalamiento al canal #ejecutivo en Slack"
+    },
+    {
+      "parameters": {
+        "content": "## FTC-WF-006: Alerta de Tareas Vencidas\n\n**ID**: FTC-WF-006\n**Nombre**: Alerta de Tareas Vencidas\n**Version**: 1.0.0\n**Autor**: FinteChile\n**Fecha Creacion**: 2025-01-01\n**Ultima Modificacion**: 2025-01-01\n\n---\n\n### Descripcion\nWorkflow automatizado que revisa diariamente las tareas vencidas en la base de datos de Notion y notifica a los responsables via email. Si una tarea tiene mas de 3 dias de atraso, se escala automaticamente al canal #ejecutivo de Slack.\n\n### Trigger\n- **Tipo**: Schedule (Cron)\n- **Frecuencia**: Diario a las 09:30 hora Chile (America/Santiago)\n\n### Variables de Entorno Requeridas\n- `NOTION_DB_TAREAS_ID` - ID de la base de datos de Tareas en Notion\n- `SLACK_CHANNEL_EJECUTIVO` - ID del canal #ejecutivo en Slack\n- `EMAIL_FROM` - Direccion de correo remitente\n\n### Credenciales Requeridas\n- **Notion account** - API key de Notion\n- **Gmail account** - OAuth2 de Gmail\n- **Slack account** - API token de Slack\n\n### Flujo\n1. Schedule Trigger (09:30 CLT)\n2. Query Notion DB Tareas (vencidas, no Hecho, no Backlog)\n3. Agrupar tareas por Asignado\n4. Loop por cada responsable:\n   - Construir email HTML personalizado\n   - Enviar email via Gmail\n5. Verificar si hay tareas con >3 dias de atraso\n6. Si hay criticas: Enviar alerta de escalamiento a Slack\n\n### Propiedades Notion Esperadas\n- `Name` o `Nombre` (title) - Nombre de la tarea\n- `fecha_limite` (date) - Fecha limite de la tarea\n- `estado` (select) - Estado de la tarea\n- `Asignado` (people) - Persona responsable\n- `Prioridad` o `prioridad` (select) - Nivel de prioridad",
+        "height": 780,
+        "width": 420,
+        "color": 4
+      },
+      "id": "sticky-note-001",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Query Tareas Vencidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Tareas Vencidas": {
+      "main": [
+        [
+          {
+            "node": "Agrupar por Asignado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agrupar por Asignado": {
+      "main": [
+        [
+          {
+            "node": "Loop por Asignado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop por Asignado": {
+      "main": [
+        null,
+        [
+          {
+            "node": "Construir Email Personalizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir Email Personalizado": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email al Responsable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Email al Responsable": {
+      "main": [
+        [
+          {
+            "node": "Tarea > 3 dias vencida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tarea > 3 dias vencida?": {
+      "main": [
+        [
+          {
+            "node": "Construir Mensaje Slack Escalamiento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop por Asignado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir Mensaje Slack Escalamiento": {
+      "main": [
+        [
+          {
+            "node": "Slack Alerta Escalamiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Alerta Escalamiento": {
+      "main": [
+        [
+          {
+            "node": "Loop por Asignado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Santiago"
+  },
+  "versionId": "ftc-wf-006-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "fintechile-instance"
+  },
+  "id": "FTC-WF-006",
+  "tags": [
+    {
+      "name": "alertas",
+      "id": "tag-alertas"
+    },
+    {
+      "name": "tareas",
+      "id": "tag-tareas"
+    },
+    {
+      "name": "produccion",
+      "id": "tag-produccion"
+    }
+  ]
+}

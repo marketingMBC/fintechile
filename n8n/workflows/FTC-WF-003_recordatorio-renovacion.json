@@ -1,0 +1,906 @@
+{
+  "name": "FTC-WF-003_recordatorio-renovacion",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FTC-WF-003 - Recordatorio de Renovacion\n\n**Descripcion:** Envia recordatorios automaticos de renovacion de membresia a los asociados segun la proximidad de vencimiento (30, 15 y 7 dias). Escala la urgencia del canal y tono segun el plazo.\n\n**Owner:** FinteChile Ops\n**Fecha creacion:** 2025-02-18\n**Version:** 1.0.0\n**Criticidad:** Alta\n**Folder:** /Core\n\n**Logica:**\n1. Se ejecuta diariamente a las 09:00 CLT\n2. Consulta DB Renovaciones (excluye \"Al dia\" y \"No renovara\")\n3. Clasifica registros por dias restantes (30, 15, 7)\n4. 30 dias: Email informativo al contacto\n5. 15 dias: Email + Slack al KAM\n6. 7 dias: Email URGENTE + Slack #ejecutivo\n7. Actualiza campo \"Ultima alerta enviada\" en Notion\n\n**Variables de entorno requeridas:**\n- NOTION_DB_RENOVACIONES_ID\n- NOTION_DB_EMPRESAS_ID\n- SLACK_CHANNEL_EJECUTIVO\n- EMAIL_FROM",
+        "height": 520,
+        "width": 420,
+        "color": 4
+      },
+      "id": "sticky-metadata",
+      "name": "WF Metadata",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Diario 09:00 CLT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$env.NOTION_DB_RENOVACIONES_ID}}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Estado_Pago|select",
+              "condition": "is_not",
+              "textValue": "Al dia"
+            },
+            {
+              "key": "Estado_Pago|select",
+              "condition": "is_not",
+              "textValue": "No renovara"
+            }
+          ],
+          "combinator": "AND"
+        },
+        "options": {}
+      },
+      "id": "notion-query-renovaciones",
+      "name": "Query Renovaciones Pendientes",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FTC-WF-003: Calcular dias hasta vencimiento y clasificar registros\n// Categorias: 30 dias, 15 dias, 7 dias desde hoy\n\nconst items = $input.all();\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\n\nconst results = {\n  group_30: [],\n  group_15: [],\n  group_7: [],\n  skipped: []\n};\n\nfor (const item of items) {\n  const props = item.json.properties || item.json;\n\n  // Obtener fecha de vencimiento del campo Fecha_Vencimiento\n  const fechaVencimientoRaw =\n    props.Fecha_Vencimiento?.date?.start ||\n    props.Fecha_Vencimiento?.start ||\n    props.fecha_vencimiento?.date?.start ||\n    props.fecha_vencimiento?.start ||\n    null;\n\n  if (!fechaVencimientoRaw) {\n    results.skipped.push({\n      id: item.json.id,\n      reason: 'Sin fecha de vencimiento'\n    });\n    continue;\n  }\n\n  const fechaVencimiento = new Date(fechaVencimientoRaw);\n  fechaVencimiento.setHours(0, 0, 0, 0);\n\n  const diffTime = fechaVencimiento.getTime() - today.getTime();\n  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));\n\n  // Obtener datos relevantes del registro\n  const record = {\n    id: item.json.id,\n    pageUrl: item.json.url || '',\n    diasRestantes: diffDays,\n    fechaVencimiento: fechaVencimientoRaw,\n    estadoPago:\n      props.Estado_Pago?.select?.name ||\n      props.Estado_Pago?.name ||\n      props.estado_pago?.select?.name ||\n      'Desconocido',\n    empresaRelation:\n      props.Empresa?.relation?.[0]?.id ||\n      props.empresa?.relation?.[0]?.id ||\n      null,\n    nombreEmpresa:\n      props.Nombre_Empresa?.title?.[0]?.plain_text ||\n      props.nombre_empresa?.title?.[0]?.plain_text ||\n      props.Empresa_Nombre?.rich_text?.[0]?.plain_text ||\n      'Empresa no identificada',\n    tipoMembresia:\n      props.Tipo_Membresia?.select?.name ||\n      props.tipo_membresia?.select?.name ||\n      'No especificada',\n    montoRenovacion:\n      props.Monto_Renovacion?.number ||\n      props.monto_renovacion?.number ||\n      null,\n    ejecutivoAsignado:\n      props.Ejecutivo_Asignado?.people?.[0]?.name ||\n      props.ejecutivo_asignado?.people?.[0]?.name ||\n      null,\n    ejecutivoEmail:\n      props.Ejecutivo_Asignado?.people?.[0]?.person?.email ||\n      props.ejecutivo_asignado?.people?.[0]?.person?.email ||\n      null,\n    ultimaAlerta:\n      props.Ultima_alerta_enviada?.date?.start ||\n      props.ultima_alerta_enviada?.date?.start ||\n      null\n  };\n\n  // Clasificar por dias exactos para evitar spam\n  // Se envia alerta en el dia exacto (30, 15, 7) o si nunca se ha enviado\n  // y esta dentro del rango\n  if (diffDays === 30) {\n    results.group_30.push(record);\n  } else if (diffDays === 15) {\n    results.group_15.push(record);\n  } else if (diffDays === 7) {\n    results.group_7.push(record);\n  } else if (diffDays > 0 && diffDays < 7 && !record.ultimaAlerta) {\n    // Si faltan menos de 7 dias y nunca se envio alerta, incluir en grupo 7\n    results.group_7.push(record);\n  } else {\n    results.skipped.push({\n      id: item.json.id,\n      diasRestantes: diffDays,\n      reason: 'Fuera de ventana de alerta'\n    });\n  }\n}\n\nreturn [\n  {\n    json: {\n      group_30: results.group_30,\n      group_15: results.group_15,\n      group_7: results.group_7,\n      skipped: results.skipped,\n      summary: {\n        total_procesados: items.length,\n        alertas_30d: results.group_30.length,\n        alertas_15d: results.group_15.length,\n        alertas_7d: results.group_7.length,\n        omitidos: results.skipped.length,\n        fecha_ejecucion: today.toISOString()\n      }\n    }\n  }\n];"
+      },
+      "id": "code-clasificar",
+      "name": "Clasificar por Dias Restantes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-30d",
+              "leftValue": "={{$json.group_30.length}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-30d",
+      "name": "Hay alertas 30d?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        960,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-15d",
+              "leftValue": "={{$json.group_15.length}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-15d",
+      "name": "Hay alertas 15d?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-7d",
+              "leftValue": "={{$json.group_7.length}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-7d",
+      "name": "Hay alertas 7d?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        960,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Expandir grupo 30 dias en items individuales\nconst group = $('Clasificar por Dias Restantes').first().json.group_30;\nreturn group.map(record => ({ json: record }));"
+      },
+      "id": "code-split-30d",
+      "name": "Split Items 30d",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Expandir grupo 15 dias en items individuales\nconst group = $('Clasificar por Dias Restantes').first().json.group_15;\nreturn group.map(record => ({ json: record }));"
+      },
+      "id": "code-split-15d",
+      "name": "Split Items 15d",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Expandir grupo 7 dias en items individuales\nconst group = $('Clasificar por Dias Restantes').first().json.group_7;\nreturn group.map(record => ({ json: record }));"
+      },
+      "id": "code-split-7d",
+      "name": "Split Items 7d",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "get",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.empresaRelation}}"
+        },
+        "options": {}
+      },
+      "id": "notion-get-empresa-30d",
+      "name": "Get Empresa (30d)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        100
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "get",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.empresaRelation}}"
+        },
+        "options": {}
+      },
+      "id": "notion-get-empresa-15d",
+      "name": "Get Empresa (15d)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "get",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.empresaRelation}}"
+        },
+        "options": {}
+      },
+      "id": "notion-get-empresa-7d",
+      "name": "Get Empresa (7d)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        520
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos de contacto desde la empresa para email 30d\nconst renovacion = $('Split Items 30d').item.json;\nconst empresa = $input.first().json;\nconst props = empresa.properties || empresa;\n\nconst contactoEmail =\n  props.Email_Contacto?.email ||\n  props.email_contacto?.email ||\n  props.Email?.email ||\n  props.email?.email ||\n  null;\n\nconst contactoNombre =\n  props.Contacto_Principal?.rich_text?.[0]?.plain_text ||\n  props.contacto_principal?.rich_text?.[0]?.plain_text ||\n  props.Nombre_Contacto?.rich_text?.[0]?.plain_text ||\n  'Estimado/a asociado/a';\n\nconst nombreEmpresa =\n  props.Nombre?.title?.[0]?.plain_text ||\n  props.nombre?.title?.[0]?.plain_text ||\n  props.Name?.title?.[0]?.plain_text ||\n  renovacion.nombreEmpresa;\n\nreturn [{\n  json: {\n    ...renovacion,\n    contactoEmail,\n    contactoNombre,\n    nombreEmpresa,\n    empresaPageUrl: empresa.url || ''\n  }\n}];"
+      },
+      "id": "code-prep-email-30d",
+      "name": "Preparar Datos Email 30d",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos de contacto desde la empresa para email 15d\nconst renovacion = $('Split Items 15d').item.json;\nconst empresa = $input.first().json;\nconst props = empresa.properties || empresa;\n\nconst contactoEmail =\n  props.Email_Contacto?.email ||\n  props.email_contacto?.email ||\n  props.Email?.email ||\n  props.email?.email ||\n  null;\n\nconst contactoNombre =\n  props.Contacto_Principal?.rich_text?.[0]?.plain_text ||\n  props.contacto_principal?.rich_text?.[0]?.plain_text ||\n  props.Nombre_Contacto?.rich_text?.[0]?.plain_text ||\n  'Estimado/a asociado/a';\n\nconst nombreEmpresa =\n  props.Nombre?.title?.[0]?.plain_text ||\n  props.nombre?.title?.[0]?.plain_text ||\n  props.Name?.title?.[0]?.plain_text ||\n  renovacion.nombreEmpresa;\n\nreturn [{\n  json: {\n    ...renovacion,\n    contactoEmail,\n    contactoNombre,\n    nombreEmpresa,\n    empresaPageUrl: empresa.url || ''\n  }\n}];"
+      },
+      "id": "code-prep-email-15d",
+      "name": "Preparar Datos Email 15d",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar datos de contacto desde la empresa para email 7d\nconst renovacion = $('Split Items 7d').item.json;\nconst empresa = $input.first().json;\nconst props = empresa.properties || empresa;\n\nconst contactoEmail =\n  props.Email_Contacto?.email ||\n  props.email_contacto?.email ||\n  props.Email?.email ||\n  props.email?.email ||\n  null;\n\nconst contactoNombre =\n  props.Contacto_Principal?.rich_text?.[0]?.plain_text ||\n  props.contacto_principal?.rich_text?.[0]?.plain_text ||\n  props.Nombre_Contacto?.rich_text?.[0]?.plain_text ||\n  'Estimado/a asociado/a';\n\nconst nombreEmpresa =\n  props.Nombre?.title?.[0]?.plain_text ||\n  props.nombre?.title?.[0]?.plain_text ||\n  props.Name?.title?.[0]?.plain_text ||\n  renovacion.nombreEmpresa;\n\nreturn [{\n  json: {\n    ...renovacion,\n    contactoEmail,\n    contactoNombre,\n    nombreEmpresa,\n    empresaPageUrl: empresa.url || ''\n  }\n}];"
+      },
+      "id": "code-prep-email-7d",
+      "name": "Preparar Datos Email 7d",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.contactoEmail}}",
+        "subject": "=FinteChile - Recordatorio de Renovacion de Membresia | {{$json.nombreEmpresa}}",
+        "emailType": "html",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <div style=\"background-color: #1a365d; padding: 20px; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 22px;\">FinteChile</h1>\n  </div>\n  <div style=\"padding: 30px; background-color: #f7fafc;\">\n    <p>Estimado/a <strong>{{$json.contactoNombre}}</strong>,</p>\n    <p>Le informamos que la membresia de <strong>{{$json.nombreEmpresa}}</strong> en FinteChile vencera en <strong>{{$json.diasRestantes}} dias</strong> ({{$json.fechaVencimiento}}).</p>\n    <p>Tipo de membresia: <strong>{{$json.tipoMembresia}}</strong></p>\n    {{$json.montoRenovacion ? '<p>Monto de renovacion: <strong>UF ' + $json.montoRenovacion + '</strong></p>' : ''}}\n    <p>Para continuar disfrutando de los beneficios de ser parte de nuestra comunidad Fintech, le invitamos a gestionar su renovacion con anticipacion.</p>\n    <p>Si tiene alguna consulta sobre el proceso de renovacion, no dude en contactarnos.</p>\n    <br>\n    <p>Saludos cordiales,<br><strong>Equipo FinteChile</strong></p>\n  </div>\n  <div style=\"background-color: #e2e8f0; padding: 15px; text-align: center; font-size: 12px; color: #718096;\">\n    <p>Este es un mensaje automatico del sistema de gestion de FinteChile.</p>\n  </div>\n</div>",
+        "options": {
+          "replyTo": "={{$env.EMAIL_FROM}}",
+          "senderName": "FinteChile - Membresias"
+        }
+      },
+      "id": "gmail-send-30d",
+      "name": "Email Informativo (30d)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1880,
+        100
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.contactoEmail}}",
+        "subject": "=FinteChile - Renovacion Proxima a Vencer | {{$json.nombreEmpresa}} ({{$json.diasRestantes}} dias)",
+        "emailType": "html",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <div style=\"background-color: #c05621; padding: 20px; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 22px;\">FinteChile - Renovacion Proxima</h1>\n  </div>\n  <div style=\"padding: 30px; background-color: #fffaf0;\">\n    <p>Estimado/a <strong>{{$json.contactoNombre}}</strong>,</p>\n    <p style=\"color: #c05621; font-weight: bold; font-size: 16px;\">Su membresia vence en {{$json.diasRestantes}} dias.</p>\n    <p>La membresia de <strong>{{$json.nombreEmpresa}}</strong> en FinteChile vencera el <strong>{{$json.fechaVencimiento}}</strong>.</p>\n    <p>Tipo de membresia: <strong>{{$json.tipoMembresia}}</strong></p>\n    {{$json.montoRenovacion ? '<p>Monto de renovacion: <strong>UF ' + $json.montoRenovacion + '</strong></p>' : ''}}\n    <div style=\"background-color: #feebc8; border-left: 4px solid #c05621; padding: 15px; margin: 20px 0;\">\n      <p style=\"margin: 0;\"><strong>Importante:</strong> Le recomendamos gestionar la renovacion a la brevedad para evitar la interrupcion de beneficios y accesos asociados a su membresia.</p>\n    </div>\n    <p>Quedamos a su disposicion para cualquier consulta.</p>\n    <br>\n    <p>Saludos cordiales,<br><strong>Equipo FinteChile</strong></p>\n  </div>\n  <div style=\"background-color: #e2e8f0; padding: 15px; text-align: center; font-size: 12px; color: #718096;\">\n    <p>Este es un mensaje automatico del sistema de gestion de FinteChile.</p>\n  </div>\n</div>",
+        "options": {
+          "replyTo": "={{$env.EMAIL_FROM}}",
+          "senderName": "FinteChile - Membresias"
+        }
+      },
+      "id": "gmail-send-15d",
+      "name": "Email Recordatorio (15d)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1880,
+        240
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.contactoEmail}}",
+        "subject": "=URGENTE: Renovacion de Membresia FinteChile | {{$json.nombreEmpresa}} - Vence en {{$json.diasRestantes}} dias",
+        "emailType": "html",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <div style=\"background-color: #c53030; padding: 20px; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 22px;\">URGENTE - Renovacion de Membresia</h1>\n  </div>\n  <div style=\"padding: 30px; background-color: #fff5f5;\">\n    <p>Estimado/a <strong>{{$json.contactoNombre}}</strong>,</p>\n    <div style=\"background-color: #fed7d7; border-left: 4px solid #c53030; padding: 15px; margin: 20px 0;\">\n      <p style=\"margin: 0; color: #c53030; font-weight: bold; font-size: 18px;\">La membresia de {{$json.nombreEmpresa}} vence en {{$json.diasRestantes}} dias ({{$json.fechaVencimiento}}).</p>\n    </div>\n    <p>Tipo de membresia: <strong>{{$json.tipoMembresia}}</strong></p>\n    {{$json.montoRenovacion ? '<p>Monto de renovacion: <strong>UF ' + $json.montoRenovacion + '</strong></p>' : ''}}\n    <p style=\"color: #c53030;\"><strong>Accion requerida:</strong> Si la renovacion no se gestiona antes del vencimiento, los accesos y beneficios asociados a la membresia seran suspendidos.</p>\n    <p>Le solicitamos contactarse con su ejecutivo asignado o responder a este correo para coordinar el proceso de renovacion.</p>\n    <br>\n    <p>Saludos cordiales,<br><strong>Equipo FinteChile</strong></p>\n  </div>\n  <div style=\"background-color: #e2e8f0; padding: 15px; text-align: center; font-size: 12px; color: #718096;\">\n    <p>Este es un mensaje automatico del sistema de gestion de FinteChile.</p>\n  </div>\n</div>",
+        "options": {
+          "replyTo": "={{$env.EMAIL_FROM}}",
+          "senderName": "FinteChile - URGENTE Membresias"
+        }
+      },
+      "id": "gmail-send-7d",
+      "name": "Email URGENTE (7d)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1880,
+        460
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.ejecutivoEmail ? '' : $env.SLACK_CHANNEL_EJECUTIVO}}"
+        },
+        "messageType": "block",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "=:warning: Renovacion Proxima - {{$json.nombreEmpresa}}"
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "=*Empresa:* {{$json.nombreEmpresa}}\n*Dias restantes:* {{$json.diasRestantes}}\n*Vencimiento:* {{$json.fechaVencimiento}}\n*Tipo membresia:* {{$json.tipoMembresia}}\n*Estado pago:* {{$json.estadoPago}}{{$json.ejecutivoAsignado ? '\\n*KAM asignado:* ' + $json.ejecutivoAsignado : ''}}"
+              }
+            },
+            {
+              "type": "context",
+              "elements": [
+                {
+                  "type": "mrkdwn",
+                  "text": ":robot_face: Alerta automatica FTC-WF-003 | Nivel: Moderado (15d)"
+                }
+              ]
+            }
+          ]
+        },
+        "otherOptions": {}
+      },
+      "id": "slack-notify-kam-15d",
+      "name": "Slack Notificar KAM (15d)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1880,
+        380
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$env.SLACK_CHANNEL_EJECUTIVO}}"
+        },
+        "messageType": "block",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "=:rotating_light: URGENTE Renovacion - {{$json.nombreEmpresa}}"
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "=*:red_circle: ATENCION: Membresia por vencer en {{$json.diasRestantes}} dias*\n\n*Empresa:* {{$json.nombreEmpresa}}\n*Vencimiento:* {{$json.fechaVencimiento}}\n*Tipo membresia:* {{$json.tipoMembresia}}\n*Estado pago:* {{$json.estadoPago}}\n*Monto:* {{$json.montoRenovacion ? 'UF ' + $json.montoRenovacion : 'No especificado'}}{{$json.ejecutivoAsignado ? '\\n*KAM asignado:* ' + $json.ejecutivoAsignado : ''}}"
+              }
+            },
+            {
+              "type": "divider"
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": ":point_right: Se requiere accion inmediata para evitar la suspension de la membresia."
+              }
+            },
+            {
+              "type": "context",
+              "elements": [
+                {
+                  "type": "mrkdwn",
+                  "text": ":robot_face: Alerta automatica FTC-WF-003 | Nivel: URGENTE (7d)"
+                }
+              ]
+            }
+          ]
+        },
+        "otherOptions": {}
+      },
+      "id": "slack-alert-7d",
+      "name": "Slack URGENTE #ejecutivo (7d)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1880,
+        600
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.id}}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Ultima_alerta_enviada|date",
+              "date": "={{$now.toISO()}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-alerta-30d",
+      "name": "Update Ultima Alerta (30d)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2120,
+        100
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.id}}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Ultima_alerta_enviada|date",
+              "date": "={{$now.toISO()}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-alerta-15d",
+      "name": "Update Ultima Alerta (15d)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2120,
+        340
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.id}}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Ultima_alerta_enviada|date",
+              "date": "={{$now.toISO()}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-alerta-7d",
+      "name": "Update Ultima Alerta (7d)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2120,
+        560
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Diario 09:00 CLT": {
+      "main": [
+        [
+          {
+            "node": "Query Renovaciones Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Renovaciones Pendientes": {
+      "main": [
+        [
+          {
+            "node": "Clasificar por Dias Restantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar por Dias Restantes": {
+      "main": [
+        [
+          {
+            "node": "Hay alertas 30d?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Hay alertas 15d?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Hay alertas 7d?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay alertas 30d?": {
+      "main": [
+        [
+          {
+            "node": "Split Items 30d",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Hay alertas 15d?": {
+      "main": [
+        [
+          {
+            "node": "Split Items 15d",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Hay alertas 7d?": {
+      "main": [
+        [
+          {
+            "node": "Split Items 7d",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Split Items 30d": {
+      "main": [
+        [
+          {
+            "node": "Get Empresa (30d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Items 15d": {
+      "main": [
+        [
+          {
+            "node": "Get Empresa (15d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Items 7d": {
+      "main": [
+        [
+          {
+            "node": "Get Empresa (7d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Empresa (30d)": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos Email 30d",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Empresa (15d)": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos Email 15d",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Empresa (7d)": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos Email 7d",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos Email 30d": {
+      "main": [
+        [
+          {
+            "node": "Email Informativo (30d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos Email 15d": {
+      "main": [
+        [
+          {
+            "node": "Email Recordatorio (15d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos Email 7d": {
+      "main": [
+        [
+          {
+            "node": "Email URGENTE (7d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Informativo (30d)": {
+      "main": [
+        [
+          {
+            "node": "Update Ultima Alerta (30d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Recordatorio (15d)": {
+      "main": [
+        [
+          {
+            "node": "Slack Notificar KAM (15d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Notificar KAM (15d)": {
+      "main": [
+        [
+          {
+            "node": "Update Ultima Alerta (15d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email URGENTE (7d)": {
+      "main": [
+        [
+          {
+            "node": "Slack URGENTE #ejecutivo (7d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack URGENTE #ejecutivo (7d)": {
+      "main": [
+        [
+          {
+            "node": "Update Ultima Alerta (7d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Santiago",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "tags": [
+    {
+      "name": "Core"
+    },
+    {
+      "name": "Renovaciones"
+    },
+    {
+      "name": "Alta-Criticidad"
+    }
+  ]
+}

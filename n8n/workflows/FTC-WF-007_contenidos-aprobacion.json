@@ -1,0 +1,418 @@
+{
+  "name": "FTC-WF-007_contenidos-aprobacion",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        300
+      ],
+      "notes": "Polling cada 10 minutos para detectar nuevos contenidos RRSS en Notion"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_CONTENIDOS_ID }}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Estado",
+              "condition": "equals",
+              "type": "select",
+              "selectValue": "Nuevo"
+            },
+            {
+              "key": "Tipo_Contenido",
+              "condition": "equals",
+              "type": "select",
+              "selectValue": "Post RRSS"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Query Notion Contenidos",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        40,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-id",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Busca registros en DB Contenidos y Comunicaciones con Estado=Nuevo y Tipo_Contenido=Post RRSS"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-empty-check",
+              "leftValue": "={{ $json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "IF No Results",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ],
+      "notes": "Verifica si la consulta devolvio resultados. Si no hay registros nuevos, se detiene el flujo."
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Stop - No New Content",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        520,
+        160
+      ],
+      "notes": "No se encontraron contenidos nuevos. Flujo termina silenciosamente."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract relevant fields from Notion record\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const props = item.json.properties || item.json;\n\n  // Extract properties - adapt property names to your Notion DB schema\n  const pageId = item.json.id || item.json.pageId || '';\n  const titulo = props.Titulo?.title?.[0]?.plain_text\n    || props.Titulo?.title?.[0]?.text?.content\n    || props.titulo?.title?.[0]?.plain_text\n    || props.Name?.title?.[0]?.plain_text\n    || 'Sin titulo';\n\n  const descripcion = props.Descripcion?.rich_text?.[0]?.plain_text\n    || props.descripcion?.rich_text?.[0]?.plain_text\n    || props.Brief?.rich_text?.[0]?.plain_text\n    || '';\n\n  const canal = props.Canal?.select?.name\n    || props.canal?.select?.name\n    || props.Red_Social?.select?.name\n    || 'General';\n\n  const targetAudience = props.Target_Audience?.rich_text?.[0]?.plain_text\n    || props.Audiencia?.rich_text?.[0]?.plain_text\n    || props.audiencia?.rich_text?.[0]?.plain_text\n    || 'Ecosistema fintech Chile';\n\n  const responsable = props.Responsable?.people?.[0]?.name\n    || props.responsable?.people?.[0]?.name\n    || '';\n\n  const responsableEmail = props.Responsable?.people?.[0]?.person?.email\n    || props.responsable?.people?.[0]?.person?.email\n    || '';\n\n  const notionUrl = item.json.url || `https://www.notion.so/${pageId.replace(/-/g, '')}`;\n\n  results.push({\n    json: {\n      pageId,\n      titulo,\n      descripcion,\n      canal,\n      targetAudience,\n      responsable,\n      responsableEmail,\n      notionUrl\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Extract Content Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        440
+      ],
+      "notes": "Extrae campos relevantes del registro Notion: titulo, descripcion, canal, audiencia, responsable"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un experto en comunicaciones y marketing digital para FinteChile, la asociacion de empresas fintech de Chile. Tu tarea es generar variantes de copy para redes sociales. Responde SIEMPRE en espanol chileno profesional. Genera exactamente 3 variantes. Cada variante debe incluir: texto principal, hashtags sugeridos, y un CTA (call to action). Formatea tu respuesta como JSON valido con la estructura: {\\\"variantes\\\": [{\\\"numero\\\": 1, \\\"texto\\\": \\\"...\\\", \\\"hashtags\\\": \\\"...\\\", \\\"cta\\\": \\\"...\\\"}]}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Genera 3 variantes de copy para un post en {{ $json.canal }}.\\n\\nTitulo del contenido: {{ $json.titulo }}\\nBrief/Descripcion: {{ $json.descripcion }}\\nAudiencia objetivo: {{ $json.targetAudience }}\\n\\nAdapta el tono y longitud al canal {{ $json.canal }}. Si es LinkedIn, usa tono profesional. Si es Instagram, usa tono mas dinamico y visual. Incluye emojis apropiados para el canal.\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "OpenAI Generate Copy Variants",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        440
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-cred-id",
+          "name": "OpenAI account"
+        }
+      },
+      "notes": "Llama a OpenAI API para generar 3 variantes de copy basadas en el brief del contenido"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the AI-generated variants into a clean structure\nconst input = $input.first().json;\nconst previousData = $('Extract Content Fields').first().json;\n\nlet variantes = [];\nlet rawResponse = '';\n\ntry {\n  // Extract content from OpenAI response\n  const content = input.choices?.[0]?.message?.content || '';\n  rawResponse = content;\n\n  // Try parsing JSON from the response\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    variantes = parsed.variantes || parsed.variants || [];\n  }\n} catch (e) {\n  // If JSON parsing fails, split by variant markers\n  variantes = [\n    { numero: 1, texto: rawResponse, hashtags: '', cta: 'Parsing failed - review raw response' }\n  ];\n}\n\n// Build formatted text for email and Notion\nlet formattedForEmail = '';\nlet formattedForNotion = '';\n\nvariantes.forEach((v, i) => {\n  const num = v.numero || (i + 1);\n  formattedForEmail += `<h3>Variante ${num}</h3>`;\n  formattedForEmail += `<p>${(v.texto || '').replace(/\\n/g, '<br>')}</p>`;\n  formattedForEmail += `<p><strong>Hashtags:</strong> ${v.hashtags || 'N/A'}</p>`;\n  formattedForEmail += `<p><strong>CTA:</strong> ${v.cta || 'N/A'}</p>`;\n  formattedForEmail += '<hr>';\n\n  formattedForNotion += `--- Variante ${num} ---\\n`;\n  formattedForNotion += `${v.texto || ''}\\n`;\n  formattedForNotion += `Hashtags: ${v.hashtags || 'N/A'}\\n`;\n  formattedForNotion += `CTA: ${v.cta || 'N/A'}\\n\\n`;\n});\n\nconst now = new Date().toISOString();\n\nreturn [{\n  json: {\n    ...previousData,\n    variantes,\n    variantesCount: variantes.length,\n    formattedForEmail,\n    formattedForNotion: formattedForNotion.trim(),\n    rawAiResponse: rawResponse,\n    generatedAt: now\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Format Copy Variants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        440
+      ],
+      "notes": "Formatea las 3 variantes generadas por IA para uso en email, Notion y Slack"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Variantes_Copy",
+              "richTextValue": "={{ $json.formattedForNotion }}",
+              "keyType": "richText"
+            },
+            {
+              "key": "Estado",
+              "selectValue": "En Revision",
+              "keyType": "select"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Update Notion - Variants & Status",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1240,
+        440
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-id",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Actualiza el registro en Notion: agrega variantes de copy y cambia Estado a 'En Revision'"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.EMAIL_FROM }}",
+        "subject": "=FTC - Aprobacion Contenido RRSS: {{ $json.titulo }}",
+        "emailType": "html",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; padding: 20px;\">\n  <div style=\"background: #1a1a2e; color: white; padding: 20px; border-radius: 8px 8px 0 0;\">\n    <h1 style=\"margin: 0; font-size: 20px;\">FinteChile - Aprobacion de Contenido RRSS</h1>\n  </div>\n  \n  <div style=\"background: #f5f5f5; padding: 20px; border: 1px solid #ddd;\">\n    <h2 style=\"color: #1a1a2e; margin-top: 0;\">Brief del Contenido</h2>\n    <table style=\"width: 100%; border-collapse: collapse;\">\n      <tr><td style=\"padding: 8px; font-weight: bold; width: 140px;\">Titulo:</td><td style=\"padding: 8px;\">{{ $json.titulo }}</td></tr>\n      <tr><td style=\"padding: 8px; font-weight: bold;\">Canal:</td><td style=\"padding: 8px;\">{{ $json.canal }}</td></tr>\n      <tr><td style=\"padding: 8px; font-weight: bold;\">Audiencia:</td><td style=\"padding: 8px;\">{{ $json.targetAudience }}</td></tr>\n      <tr><td style=\"padding: 8px; font-weight: bold;\">Descripcion:</td><td style=\"padding: 8px;\">{{ $json.descripcion }}</td></tr>\n      <tr><td style=\"padding: 8px; font-weight: bold;\">Responsable:</td><td style=\"padding: 8px;\">{{ $json.responsable }}</td></tr>\n    </table>\n  </div>\n  \n  <div style=\"background: white; padding: 20px; border: 1px solid #ddd; border-top: none;\">\n    <h2 style=\"color: #1a1a2e;\">Variantes Generadas por IA</h2>\n    <p style=\"color: #666; font-size: 13px;\">Se generaron {{ $json.variantesCount }} variantes el {{ $json.generatedAt }}.</p>\n    {{ $json.formattedForEmail }}\n  </div>\n  \n  <div style=\"background: #e8f5e9; padding: 20px; border: 1px solid #ddd; border-top: none; text-align: center;\">\n    <h3 style=\"margin-top: 0;\">Acciones</h3>\n    <a href=\"{{ $json.notionUrl }}\" style=\"display: inline-block; background: #4CAF50; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 5px; font-weight: bold;\">Revisar y Aprobar en Notion</a>\n    <a href=\"{{ $json.notionUrl }}\" style=\"display: inline-block; background: #f44336; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 5px; font-weight: bold;\">Rechazar / Solicitar Cambios</a>\n  </div>\n  \n  <div style=\"background: #f9f9f9; padding: 15px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;\">\n    <p style=\"margin: 0; font-size: 12px; color: #999; text-align: center;\">Workflow FTC-WF-007 | FinteChile Automations | Generado automaticamente - no responder a este email</p>\n  </div>\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "Email Aprobacion",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1480,
+        340
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-cred-id",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Envia email de aprobacion al encargado de comunicaciones con brief original y variantes generadas"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_CHANNEL_OPS }}"
+        },
+        "text": "=:pencil: *Nuevo contenido RRSS listo para revision*\n\n*Titulo:* {{ $json.titulo }}\n*Canal:* {{ $json.canal }}\n*Audiencia:* {{ $json.targetAudience }}\n*Responsable:* {{ $json.responsable }}\n\nSe generaron *{{ $json.variantesCount }} variantes* de copy con IA.\nEstado actualizado a *En Revision*.\n\n:point_right: <{{ $json.notionUrl }}|Ver en Notion>\n\n_Workflow FTC-WF-007 | {{ $json.generatedAt }}_",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1480,
+        540
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-cred-id",
+          "name": "Slack account"
+        }
+      },
+      "notes": "Notifica en Slack al canal de operaciones que hay un contenido nuevo listo para revision"
+    },
+    {
+      "parameters": {
+        "content": "## FTC-WF-007: Contenidos y Aprobacion RRSS\n\n**Descripcion:** Flujo automatizado para generacion y aprobacion de contenidos de redes sociales. Detecta nuevos registros en la DB de Contenidos (Notion), genera variantes de copy usando IA (OpenAI), actualiza Notion y notifica al equipo para revision.\n\n**Owner:** Comunicaciones - FinteChile\n**Fecha de creacion:** 2025-02-18\n**Version:** 1.0\n**Criticidad:** Media\n**Folder:** /Comunicaciones\n\n### Variables de entorno requeridas:\n- `NOTION_DB_CONTENIDOS_ID` - ID de la base de datos Contenidos y Comunicaciones\n- `EMAIL_FROM` - Email del remitente (comunicaciones@fintechile.org)\n- `SLACK_CHANNEL_OPS` - ID del canal de Slack para notificaciones\n\n### Credenciales requeridas:\n- Notion account (Internal Integration Token)\n- OpenAI account (API Key)\n- Gmail account (OAuth2)\n- Slack account (OAuth2 Bot Token)\n\n### Flujo:\n1. Schedule Trigger (cada 10 min)\n2. Query Notion DB (Estado=Nuevo, Tipo=Post RRSS)\n3. IF no results -> Stop\n4. Extract fields (titulo, canal, audiencia, etc.)\n5. OpenAI: Generar 3 variantes de copy\n6. Format variants\n7. Update Notion (variantes + Estado=En Revision)\n8. Email de aprobacion\n9. Slack notification",
+        "height": 580,
+        "width": 380,
+        "color": 4
+      },
+      "id": "a1b2c3d4-0011-4000-8000-000000000011",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -540,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Query Notion Contenidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Notion Contenidos": {
+      "main": [
+        [
+          {
+            "node": "IF No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF No Results": {
+      "main": [
+        [
+          {
+            "node": "Stop - No New Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Content Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Content Fields": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Generate Copy Variants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Generate Copy Variants": {
+      "main": [
+        [
+          {
+            "node": "Format Copy Variants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Copy Variants": {
+      "main": [
+        [
+          {
+            "node": "Update Notion - Variants & Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Notion - Variants & Status": {
+      "main": [
+        [
+          {
+            "node": "Email Aprobacion",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Santiago",
+    "saveExecutionProgress": true
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Comunicaciones"
+    },
+    {
+      "name": "RRSS"
+    },
+    {
+      "name": "FinteChile"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-02-18T00:00:00.000Z",
+  "versionId": "1",
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "ftc-n8n-instance"
+  }
+}

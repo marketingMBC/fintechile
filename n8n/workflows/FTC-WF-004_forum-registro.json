@@ -1,0 +1,752 @@
+{
+  "name": "FTC-WF-004_forum-registro",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FTC-WF-004 | Forum Registro\n**Descripcion:** Flujo de registro de asistentes al Chile Fintech Forum 2026. Recibe datos de Typeform/Tally, verifica membresia y sponsorship en Notion, crea registro de evento, envia confirmacion por email, crea invitacion en Google Calendar y notifica en Slack.\n\n**Owner:** MBC Operator / FinteChile Ops\n**Fecha de creacion:** 2026-02-18\n**Version:** 1.0.0\n**Folder:** /Eventos\n**Criticidad:** Alta\n\n**Variables de entorno requeridas:**\n- `NOTION_DB_EMPRESAS_ID`\n- `NOTION_DB_EVENTOS_ID`\n- `NOTION_DB_SPONSORS_ID`\n- `SLACK_CHANNEL_OPS`\n- `EMAIL_FROM`",
+        "height": 380,
+        "width": 420,
+        "color": 4
+      },
+      "id": "sticky-metadata",
+      "name": "Metadata WF-004",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ftc-wf-004-forum-registro",
+        "responseMode": "responseNode",
+        "options": {
+          "responseContentType": "application/json"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Registro Forum",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ],
+      "webhookId": "ftc-wf-004-forum-registro"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and normalize incoming registration data\nconst body = $input.item.json.body;\n\nconst nombre = (body.nombre || '').trim();\nconst email = (body.email || '').trim().toLowerCase();\nconst empresa = (body.empresa || '').trim();\nconst cargo = (body.cargo || '').trim();\nconst telefono = (body.telefono || '').trim();\nconst tipo_ticket = (body.tipo_ticket || 'General').trim();\nconst es_socio = body.es_socio === true || body.es_socio === 'true' || body.es_socio === 1;\n\n// Validation\nconst errors = [];\nif (!nombre) errors.push('nombre es requerido');\nif (!email) errors.push('email es requerido');\nif (!empresa) errors.push('empresa es requerido');\nif (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {\n  errors.push('email no es valido');\n}\n\nif (errors.length > 0) {\n  throw new Error(`Datos de registro invalidos: ${errors.join(', ')}`);\n}\n\n// Generate confirmation number\nconst timestamp = Date.now().toString(36).toUpperCase();\nconst randomPart = Math.random().toString(36).substring(2, 6).toUpperCase();\nconst confirmationNumber = `FTF26-${timestamp}-${randomPart}`;\n\nreturn {\n  json: {\n    nombre,\n    email,\n    empresa,\n    cargo,\n    telefono,\n    tipo_ticket,\n    es_socio,\n    confirmation_number: confirmationNumber,\n    registration_date: new Date().toISOString(),\n    event_name: 'Chile Fintech Forum 2026',\n    event_date: '2026-06-15',\n    event_time_start: '09:00',\n    event_time_end: '18:00',\n    event_location: 'Santiago, Chile'\n  }\n};"
+      },
+      "id": "code-validate",
+      "name": "Validar y Normalizar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_EMPRESAS_ID }}"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Nombre|title",
+              "condition": "equals",
+              "titleValue": "={{ $json.empresa }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-query-empresas",
+      "name": "Notion: Buscar Empresa",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        740,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credential-id",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Evaluate membership status from Notion query result\nconst registrationData = $('Validar y Normalizar Datos').item.json;\nconst empresaResults = $input.all();\n\nlet is_member = false;\nlet member_tier = 'No Socio';\nlet empresa_notion_id = null;\nlet discount_applied = false;\nlet discount_percentage = 0;\n\nif (empresaResults.length > 0) {\n  const empresa = empresaResults[0].json;\n  const estado = empresa.properties?.Estado?.select?.name || \n                 empresa.properties?.Estado?.status?.name || '';\n  \n  if (estado === 'Activo') {\n    is_member = true;\n    empresa_notion_id = empresa.id;\n    \n    // Determine tier and discount\n    const tier = empresa.properties?.Tier?.select?.name || \n                 empresa.properties?.Categoria?.select?.name || 'Basico';\n    member_tier = tier;\n    \n    switch (tier) {\n      case 'Premium':\n      case 'Oro':\n        discount_percentage = 30;\n        break;\n      case 'Estandar':\n      case 'Plata':\n        discount_percentage = 20;\n        break;\n      default:\n        discount_percentage = 10;\n        break;\n    }\n    discount_applied = true;\n  }\n}\n\nreturn {\n  json: {\n    ...registrationData,\n    is_member,\n    member_tier,\n    empresa_notion_id,\n    discount_applied,\n    discount_percentage\n  }\n};"
+      },
+      "id": "code-evaluate-membership",
+      "name": "Evaluar Membresia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-is-member",
+              "leftValue": "={{ $json.is_member }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-is-member",
+      "name": "IF: Es Socio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Member path: Apply member discount and set tier info\nconst data = $input.item.json;\n\nreturn {\n  json: {\n    ...data,\n    registration_type: 'Socio',\n    ticket_label: `${data.tipo_ticket} (Socio ${data.member_tier} - ${data.discount_percentage}% dcto)`,\n    notes: `Socio activo - Tier: ${data.member_tier}. Descuento ${data.discount_percentage}% aplicado automaticamente.`\n  }\n};"
+      },
+      "id": "code-member-discount",
+      "name": "Aplicar Descuento Socio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Non-member path: Standard registration\nconst data = $input.item.json;\n\nreturn {\n  json: {\n    ...data,\n    registration_type: 'Externo',\n    ticket_label: `${data.tipo_ticket} (Tarifa General)`,\n    notes: 'Registro externo - Tarifa estandar sin descuento.'\n  }\n};"
+      },
+      "id": "code-standard-registration",
+      "name": "Registro Estandar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append"
+      },
+      "id": "merge-paths",
+      "name": "Merge: Unificar Registro",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_EVENTOS_ID }}"
+        },
+        "title": "={{ $json.confirmation_number }} - {{ $json.nombre }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Nombre Asistente|title",
+              "title": "={{ $json.confirmation_number }} - {{ $json.nombre }}"
+            },
+            {
+              "key": "Email|email",
+              "emailValue": "={{ $json.email }}"
+            },
+            {
+              "key": "Empresa|rich_text",
+              "textContent": "={{ $json.empresa }}"
+            },
+            {
+              "key": "Cargo|rich_text",
+              "textContent": "={{ $json.cargo }}"
+            },
+            {
+              "key": "Telefono|phone_number",
+              "phoneValue": "={{ $json.telefono }}"
+            },
+            {
+              "key": "Tipo Ticket|select",
+              "selectValue": "={{ $json.tipo_ticket }}"
+            },
+            {
+              "key": "Tipo Registro|select",
+              "selectValue": "={{ $json.registration_type }}"
+            },
+            {
+              "key": "Tier Socio|select",
+              "selectValue": "={{ $json.member_tier }}"
+            },
+            {
+              "key": "Descuento Aplicado|checkbox",
+              "checkboxValue": "={{ $json.discount_applied }}"
+            },
+            {
+              "key": "Numero Confirmacion|rich_text",
+              "textContent": "={{ $json.confirmation_number }}"
+            },
+            {
+              "key": "Fecha Registro|date",
+              "dateValue": "={{ $json.registration_date }}"
+            },
+            {
+              "key": "Evento|select",
+              "selectValue": "Chile Fintech Forum 2026"
+            },
+            {
+              "key": "Notas|rich_text",
+              "textContent": "={{ $json.notes }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-create-evento",
+      "name": "Notion: Crear Registro Evento",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credential-id",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_SPONSORS_ID }}"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Empresa|title",
+              "condition": "equals",
+              "titleValue": "={{ $json.empresa }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-query-sponsors",
+      "name": "Notion: Buscar Sponsor",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2060,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credential-id",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-is-sponsor",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "name": "filter.operator.notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-is-sponsor",
+      "name": "IF: Es Sponsor?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Registros Vinculados|rich_text",
+              "textContent": "={{ $('Merge: Unificar Registro').item.json.confirmation_number }} - {{ $('Merge: Unificar Registro').item.json.nombre }} ({{ $('Merge: Unificar Registro').item.json.email }})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-sponsor",
+      "name": "Notion: Vincular a Sponsor",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2500,
+        180
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credential-id",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append"
+      },
+      "id": "merge-sponsor-paths",
+      "name": "Merge: Post-Sponsor Check",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare email content based on registration data\nconst data = $('Merge: Unificar Registro').item.json;\n\nlet discountSection = '';\nif (data.discount_applied) {\n  discountSection = `\n    <tr>\n      <td style=\"padding: 12px 16px; background-color: #e8f5e9; border-radius: 8px;\">\n        <strong>Descuento Socio Aplicado</strong><br>\n        Como socio ${data.member_tier} de FinteChile, se ha aplicado un <strong>${data.discount_percentage}% de descuento</strong> a tu registro.\n      </td>\n    </tr>\n    <tr><td style=\"padding: 8px 0;\"></td></tr>`;\n}\n\nconst emailBody = `\n<div style=\"font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;\">\n  <div style=\"background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%); padding: 32px; text-align: center; border-radius: 12px 12px 0 0;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 24px;\">Chile Fintech Forum 2026</h1>\n    <p style=\"color: #bbdefb; margin: 8px 0 0 0; font-size: 14px;\">Confirmacion de Registro</p>\n  </div>\n  \n  <div style=\"padding: 32px; background-color: #ffffff; border: 1px solid #e0e0e0; border-top: none;\">\n    <p>Estimado/a <strong>${data.nombre}</strong>,</p>\n    <p>Tu registro al Chile Fintech Forum 2026 ha sido confirmado exitosamente.</p>\n    \n    <table style=\"width: 100%; border-collapse: collapse; margin: 24px 0;\">\n      <tr>\n        <td style=\"padding: 12px 16px; background-color: #f5f5f5; border-radius: 8px;\">\n          <strong>Numero de Confirmacion</strong><br>\n          <span style=\"font-size: 20px; color: #1a237e; font-weight: bold;\">${data.confirmation_number}</span>\n        </td>\n      </tr>\n      <tr><td style=\"padding: 8px 0;\"></td></tr>\n      ${discountSection}\n      <tr>\n        <td style=\"padding: 12px 16px; background-color: #f5f5f5; border-radius: 8px;\">\n          <table style=\"width: 100%;\">\n            <tr><td><strong>Evento:</strong></td><td>${data.event_name}</td></tr>\n            <tr><td><strong>Fecha:</strong></td><td>15 de Junio, 2026</td></tr>\n            <tr><td><strong>Horario:</strong></td><td>09:00 - 18:00 hrs</td></tr>\n            <tr><td><strong>Lugar:</strong></td><td>Santiago, Chile</td></tr>\n            <tr><td><strong>Ticket:</strong></td><td>${data.ticket_label}</td></tr>\n          </table>\n        </td>\n      </tr>\n      <tr><td style=\"padding: 8px 0;\"></td></tr>\n      <tr>\n        <td style=\"padding: 12px 16px; background-color: #f5f5f5; border-radius: 8px;\">\n          <table style=\"width: 100%;\">\n            <tr><td><strong>Nombre:</strong></td><td>${data.nombre}</td></tr>\n            <tr><td><strong>Email:</strong></td><td>${data.email}</td></tr>\n            <tr><td><strong>Empresa:</strong></td><td>${data.empresa}</td></tr>\n            <tr><td><strong>Cargo:</strong></td><td>${data.cargo}</td></tr>\n          </table>\n        </td>\n      </tr>\n    </table>\n    \n    <p style=\"font-size: 13px; color: #757575;\">Este correo es una confirmacion automatica. Guarda tu numero de confirmacion para presentarlo el dia del evento.</p>\n  </div>\n  \n  <div style=\"padding: 16px; text-align: center; background-color: #f5f5f5; border-radius: 0 0 12px 12px; border: 1px solid #e0e0e0; border-top: none;\">\n    <p style=\"margin: 0; font-size: 12px; color: #9e9e9e;\">FinteChile - Asociacion Fintech de Chile</p>\n  </div>\n</div>`;\n\nreturn {\n  json: {\n    ...data,\n    email_subject: `Confirmacion de Registro - Chile Fintech Forum 2026 [${data.confirmation_number}]`,\n    email_body: emailBody\n  }\n};"
+      },
+      "id": "code-prepare-email",
+      "name": "Preparar Email Confirmacion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.email_subject }}",
+        "message": "={{ $json.email_body }}",
+        "options": {
+          "senderName": "FinteChile - Chile Fintech Forum",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-send-confirmation",
+      "name": "Gmail: Enviar Confirmacion",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3160,
+        200
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credential-id",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "primary"
+        },
+        "title": "Chile Fintech Forum 2026 - {{ $json.nombre }}",
+        "start": "2026-06-15T09:00:00-04:00",
+        "end": "2026-06-15T18:00:00-04:00",
+        "additionalFields": {
+          "attendees": "={{ $json.email }}",
+          "description": "Chile Fintech Forum 2026\n\nAsistente: {{ $json.nombre }}\nEmpresa: {{ $json.empresa }}\nCargo: {{ $json.cargo }}\nTicket: {{ $json.ticket_label }}\nConfirmacion: {{ $json.confirmation_number }}\n\nEvento organizado por FinteChile - Asociacion Fintech de Chile.",
+          "location": "Santiago, Chile",
+          "conferenceDataVersion": 0,
+          "sendUpdates": "all",
+          "color": "9"
+        }
+      },
+      "id": "gcal-create-invite",
+      "name": "Google Calendar: Crear Invitacion",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 3,
+      "position": [
+        3160,
+        400
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "gcal-credential-id",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_CHANNEL_OPS }}"
+        },
+        "text": "={{ '' }}",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "Nuevo Registro - Chile Fintech Forum 2026"
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "*Nombre:* {{ $('Preparar Email Confirmacion').item.json.nombre }}\n*Email:* {{ $('Preparar Email Confirmacion').item.json.email }}\n*Empresa:* {{ $('Preparar Email Confirmacion').item.json.empresa }}\n*Cargo:* {{ $('Preparar Email Confirmacion').item.json.cargo }}"
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "*Tipo Registro:* {{ $('Preparar Email Confirmacion').item.json.registration_type }}\n*Ticket:* {{ $('Preparar Email Confirmacion').item.json.ticket_label }}\n*Confirmacion:* `{{ $('Preparar Email Confirmacion').item.json.confirmation_number }}`"
+              }
+            },
+            {
+              "type": "context",
+              "elements": [
+                {
+                  "type": "mrkdwn",
+                  "text": "FTC-WF-004 | {{ $('Preparar Email Confirmacion').item.json.registration_date }}"
+                }
+              ]
+            }
+          ]
+        },
+        "otherOptions": {}
+      },
+      "id": "slack-notify-ops",
+      "name": "Slack: Notificar #ops",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        3380,
+        300
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credential-id",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Registro confirmado exitosamente\",\n  \"confirmation_number\": \"{{ $('Preparar Email Confirmacion').item.json.confirmation_number }}\",\n  \"event\": \"Chile Fintech Forum 2026\",\n  \"attendee\": \"{{ $('Preparar Email Confirmacion').item.json.nombre }}\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response: OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3600,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: Registro Forum": {
+      "main": [
+        [
+          {
+            "node": "Validar y Normalizar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar y Normalizar Datos": {
+      "main": [
+        [
+          {
+            "node": "Notion: Buscar Empresa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Buscar Empresa": {
+      "main": [
+        [
+          {
+            "node": "Evaluar Membresia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar Membresia": {
+      "main": [
+        [
+          {
+            "node": "IF: Es Socio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Es Socio?": {
+      "main": [
+        [
+          {
+            "node": "Aplicar Descuento Socio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registro Estandar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar Descuento Socio": {
+      "main": [
+        [
+          {
+            "node": "Merge: Unificar Registro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registro Estandar": {
+      "main": [
+        [
+          {
+            "node": "Merge: Unificar Registro",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Unificar Registro": {
+      "main": [
+        [
+          {
+            "node": "Notion: Crear Registro Evento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Crear Registro Evento": {
+      "main": [
+        [
+          {
+            "node": "Notion: Buscar Sponsor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Buscar Sponsor": {
+      "main": [
+        [
+          {
+            "node": "IF: Es Sponsor?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Es Sponsor?": {
+      "main": [
+        [
+          {
+            "node": "Notion: Vincular a Sponsor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge: Post-Sponsor Check",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Notion: Vincular a Sponsor": {
+      "main": [
+        [
+          {
+            "node": "Merge: Post-Sponsor Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge: Post-Sponsor Check": {
+      "main": [
+        [
+          {
+            "node": "Preparar Email Confirmacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Email Confirmacion": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Enviar Confirmacion",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Calendar: Crear Invitacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Enviar Confirmacion": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notificar #ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Notificar #ops": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response: OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Santiago",
+    "saveExecutionProgress": true
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "tags": [
+    {
+      "name": "Eventos"
+    },
+    {
+      "name": "Forum"
+    },
+    {
+      "name": "Alta-Criticidad"
+    }
+  ],
+  "pinData": {}
+}

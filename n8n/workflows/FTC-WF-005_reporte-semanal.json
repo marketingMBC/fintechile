@@ -1,0 +1,466 @@
+{
+  "name": "FTC-WF-005_reporte-semanal",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FTC-WF-005 | Reporte Semanal KPIs\n\n**Descripcion:** Genera y envia un reporte semanal con KPIs clave de FinteChile: empresas activas, renovaciones por vencer, proximos eventos, pipeline comercial y tareas vencidas.\n\n**Owner:** MBC Operator\n**Fecha creacion:** 2025-02-18\n**Version:** 1.0\n**Criticidad:** Media\n**Folder:** /Comunicaciones\n\n**Trigger:** Cada lunes a las 08:00 CLT (America/Santiago)\n**Destinatarios:** Angel, Joseph + lista de distribucion liderazgo\n**Slack:** #ejecutivo\n\n**Variables de entorno requeridas:**\n- `NOTION_DB_EMPRESAS_ID`\n- `NOTION_DB_RENOVACIONES_ID`\n- `NOTION_DB_EVENTOS_ID`\n- `NOTION_DB_SPONSORS_ID`\n- `NOTION_DB_TAREAS_ID`\n- `SLACK_CHANNEL_EJECUTIVO`\n- `EMAIL_FROM`",
+        "height": 520,
+        "width": 360,
+        "color": 4
+      },
+      "id": "sticky-note-metadata",
+      "name": "Workflow Metadata",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0,
+              "triggerAtDay": {
+                "value": 1
+              }
+            }
+          ]
+        },
+        "options": {
+          "timezone": "America/Santiago"
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Lunes 08:00 CLT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_EMPRESAS_ID }}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Estado|select",
+              "condition": "equals",
+              "select": "Activo"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-empresas",
+      "name": "Query Empresas Activas",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        240
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-id",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Consulta DB Empresas filtrando Estado = Activo para contar total de empresas activas."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_RENOVACIONES_ID }}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Fecha_Vencimiento|date",
+              "condition": "onOrAfter",
+              "date": "={{ $now.startOf('month').toISO() }}"
+            },
+            {
+              "key": "Fecha_Vencimiento|date",
+              "condition": "onOrBefore",
+              "date": "={{ $now.endOf('month').toISO() }}"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notion-renovaciones",
+      "name": "Query Renovaciones por Vencer",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        440
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-id",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Consulta DB Renovaciones filtrando membresias que vencen en el mes actual."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_EVENTOS_ID }}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Fecha|date",
+              "condition": "onOrAfter",
+              "date": "={{ $now.toISO() }}"
+            },
+            {
+              "key": "Fecha|date",
+              "condition": "onOrBefore",
+              "date": "={{ $now.plus({days: 30}).toISO() }}"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notion-eventos",
+      "name": "Query Proximos Eventos (30 dias)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        640
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-id",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Consulta DB Eventos para obtener eventos en los proximos 30 dias."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_SPONSORS_ID }}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Estado|select",
+              "condition": "isNotEmpty"
+            },
+            {
+              "key": "Estado|select",
+              "condition": "doesNotEqual",
+              "select": "Cerrado Ganado"
+            },
+            {
+              "key": "Estado|select",
+              "condition": "doesNotEqual",
+              "select": "Cerrado Perdido"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notion-sponsors",
+      "name": "Query Sponsors Pipeline Abierto",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        840
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-id",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Consulta DB Sponsors Pipeline filtrando deals abiertos (no cerrados ganados ni perdidos)."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_TAREAS_ID }}"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Fecha_Limite|date",
+              "condition": "before",
+              "date": "={{ $now.toISO() }}"
+            },
+            {
+              "key": "Estado|select",
+              "condition": "doesNotEqual",
+              "select": "Completada"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notion-tareas",
+      "name": "Query Tareas Vencidas",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        1040
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-cred-id",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Consulta DB Tareas filtrando tareas con fecha_limite < hoy y estado != Completada."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// =============================================================\n// FTC-WF-005 | Compilar Reporte Semanal KPIs\n// =============================================================\n\nconst now = new Date();\nconst fechaReporte = now.toLocaleDateString('es-CL', {\n  weekday: 'long',\n  year: 'numeric',\n  month: 'long',\n  day: 'numeric',\n  timeZone: 'America/Santiago'\n});\n\n// --- 1. Empresas Activas ---\nconst empresas = $input.context.nodesById['notion-empresas'].data.main[0] || [];\nconst totalEmpresasActivas = Array.isArray(empresas) ? empresas.length : 0;\n\n// --- 2. Renovaciones por Vencer ---\nconst renovaciones = $input.context.nodesById['notion-renovaciones'].data.main[0] || [];\nconst totalRenovaciones = Array.isArray(renovaciones) ? renovaciones.length : 0;\n\nlet renovacionesHTML = '';\nif (totalRenovaciones > 0) {\n  renovacionesHTML = '<ul>';\n  for (const item of renovaciones) {\n    const props = item.json?.properties || {};\n    const nombre = props.Empresa?.title?.[0]?.plain_text ||\n                   props.Nombre?.title?.[0]?.plain_text ||\n                   props.Name?.title?.[0]?.plain_text || 'Sin nombre';\n    const fecha = props.Fecha_Vencimiento?.date?.start || 'Sin fecha';\n    renovacionesHTML += `<li><strong>${nombre}</strong> - Vence: ${fecha}</li>`;\n  }\n  renovacionesHTML += '</ul>';\n} else {\n  renovacionesHTML = '<p style=\"color:#27ae60;\">No hay membresias por vencer este mes.</p>';\n}\n\n// --- 3. Proximos Eventos ---\nconst eventos = $input.context.nodesById['notion-eventos'].data.main[0] || [];\nconst totalEventos = Array.isArray(eventos) ? eventos.length : 0;\n\nlet eventosHTML = '';\nif (totalEventos > 0) {\n  eventosHTML = '<table style=\"width:100%;border-collapse:collapse;margin:10px 0;\">';\n  eventosHTML += '<tr style=\"background:#2c3e50;color:white;\"><th style=\"padding:8px;text-align:left;\">Evento</th><th style=\"padding:8px;text-align:left;\">Fecha</th><th style=\"padding:8px;text-align:left;\">Tipo</th></tr>';\n  for (const item of eventos) {\n    const props = item.json?.properties || {};\n    const nombre = props.Nombre?.title?.[0]?.plain_text ||\n                   props.Name?.title?.[0]?.plain_text || 'Sin nombre';\n    const fecha = props.Fecha?.date?.start || 'TBD';\n    const tipo = props.Tipo?.select?.name || '-';\n    eventosHTML += `<tr style=\"border-bottom:1px solid #eee;\"><td style=\"padding:8px;\">${nombre}</td><td style=\"padding:8px;\">${fecha}</td><td style=\"padding:8px;\">${tipo}</td></tr>`;\n  }\n  eventosHTML += '</table>';\n} else {\n  eventosHTML = '<p>No hay eventos programados en los proximos 30 dias.</p>';\n}\n\n// --- 4. Pipeline Comercial ---\nconst sponsors = $input.context.nodesById['notion-sponsors'].data.main[0] || [];\nconst totalDeals = Array.isArray(sponsors) ? sponsors.length : 0;\n\nlet montoTotalPipeline = 0;\nlet pipelineHTML = '';\nif (totalDeals > 0) {\n  pipelineHTML = '<table style=\"width:100%;border-collapse:collapse;margin:10px 0;\">';\n  pipelineHTML += '<tr style=\"background:#2c3e50;color:white;\"><th style=\"padding:8px;text-align:left;\">Sponsor</th><th style=\"padding:8px;text-align:left;\">Estado</th><th style=\"padding:8px;text-align:right;\">Monto Estimado</th></tr>';\n  for (const item of sponsors) {\n    const props = item.json?.properties || {};\n    const nombre = props.Empresa?.title?.[0]?.plain_text ||\n                   props.Sponsor?.title?.[0]?.plain_text ||\n                   props.Name?.title?.[0]?.plain_text || 'Sin nombre';\n    const estado = props.Estado?.select?.name || '-';\n    const monto = props.Monto_Estimado?.number || props.Monto?.number || 0;\n    montoTotalPipeline += monto;\n    const montoFormatted = monto.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });\n    pipelineHTML += `<tr style=\"border-bottom:1px solid #eee;\"><td style=\"padding:8px;\">${nombre}</td><td style=\"padding:8px;\">${estado}</td><td style=\"padding:8px;text-align:right;\">${montoFormatted}</td></tr>`;\n  }\n  const totalFormatted = montoTotalPipeline.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });\n  pipelineHTML += `<tr style=\"background:#ecf0f1;font-weight:bold;\"><td style=\"padding:8px;\" colspan=\"2\">TOTAL PIPELINE</td><td style=\"padding:8px;text-align:right;\">${totalFormatted}</td></tr>`;\n  pipelineHTML += '</table>';\n} else {\n  pipelineHTML = '<p>No hay deals abiertos en el pipeline.</p>';\n}\n\n// --- 5. Tareas Vencidas ---\nconst tareas = $input.context.nodesById['notion-tareas'].data.main[0] || [];\nconst totalTareasVencidas = Array.isArray(tareas) ? tareas.length : 0;\n\n// Agrupar tareas por area\nconst tareasPorArea = {};\nif (totalTareasVencidas > 0) {\n  for (const item of tareas) {\n    const props = item.json?.properties || {};\n    const area = props.Area?.select?.name || props.Departamento?.select?.name || 'Sin area';\n    if (!tareasPorArea[area]) tareasPorArea[area] = [];\n    const nombre = props.Nombre?.title?.[0]?.plain_text ||\n                   props.Tarea?.title?.[0]?.plain_text ||\n                   props.Name?.title?.[0]?.plain_text || 'Sin nombre';\n    const fechaLimite = props.Fecha_Limite?.date?.start || 'Sin fecha';\n    const responsable = props.Responsable?.people?.[0]?.name || '-';\n    tareasPorArea[area].push({ nombre, fechaLimite, responsable });\n  }\n}\n\nlet tareasHTML = '';\nif (totalTareasVencidas > 0) {\n  for (const [area, items] of Object.entries(tareasPorArea)) {\n    tareasHTML += `<h4 style=\"color:#e74c3c;margin:15px 0 5px 0;\">${area} (${items.length})</h4>`;\n    tareasHTML += '<ul>';\n    for (const t of items) {\n      tareasHTML += `<li><strong>${t.nombre}</strong> - Limite: ${t.fechaLimite} - Responsable: ${t.responsable}</li>`;\n    }\n    tareasHTML += '</ul>';\n  }\n} else {\n  tareasHTML = '<p style=\"color:#27ae60;\">No hay tareas vencidas. Excelente!</p>';\n}\n\n// --- Semaforos ---\nfunction semaforo(valor, umbralVerde, umbralAmarillo) {\n  if (valor <= umbralVerde) return '&#x1F7E2;'; // verde\n  if (valor <= umbralAmarillo) return '&#x1F7E1;'; // amarillo\n  return '&#x1F534;'; // rojo\n}\n\n// --- Compilar HTML del reporte ---\nconst htmlEmail = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n</head>\n<body style=\"font-family:'Segoe UI',Arial,sans-serif;max-width:700px;margin:0 auto;background:#f5f5f5;padding:20px;\">\n  \n  <!-- Header -->\n  <div style=\"background:linear-gradient(135deg,#1a1a2e,#16213e);color:white;padding:30px;border-radius:10px 10px 0 0;text-align:center;\">\n    <h1 style=\"margin:0;font-size:24px;\">Reporte Semanal KPIs</h1>\n    <p style=\"margin:5px 0 0 0;opacity:0.8;font-size:14px;\">FinteChile | ${fechaReporte}</p>\n  </div>\n\n  <!-- KPI Cards -->\n  <div style=\"background:white;padding:25px;border-bottom:1px solid #eee;\">\n    <h2 style=\"color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:8px;margin-top:0;\">Resumen Ejecutivo</h2>\n    <table style=\"width:100%;border-collapse:collapse;\">\n      <tr>\n        <td style=\"padding:15px;text-align:center;width:25%;\">\n          <div style=\"font-size:36px;font-weight:bold;color:#2c3e50;\">${totalEmpresasActivas}</div>\n          <div style=\"font-size:12px;color:#7f8c8d;text-transform:uppercase;\">Empresas Activas</div>\n        </td>\n        <td style=\"padding:15px;text-align:center;width:25%;\">\n          <div style=\"font-size:36px;font-weight:bold;color:${totalRenovaciones > 5 ? '#e74c3c' : totalRenovaciones > 0 ? '#f39c12' : '#27ae60'};\">${totalRenovaciones}</div>\n          <div style=\"font-size:12px;color:#7f8c8d;text-transform:uppercase;\">Renovaciones por Vencer</div>\n        </td>\n        <td style=\"padding:15px;text-align:center;width:25%;\">\n          <div style=\"font-size:36px;font-weight:bold;color:#3498db;\">${totalEventos}</div>\n          <div style=\"font-size:12px;color:#7f8c8d;text-transform:uppercase;\">Eventos Proximos</div>\n        </td>\n        <td style=\"padding:15px;text-align:center;width:25%;\">\n          <div style=\"font-size:36px;font-weight:bold;color:${totalTareasVencidas > 5 ? '#e74c3c' : totalTareasVencidas > 0 ? '#f39c12' : '#27ae60'};\">${totalTareasVencidas}</div>\n          <div style=\"font-size:12px;color:#7f8c8d;text-transform:uppercase;\">Tareas Vencidas</div>\n        </td>\n      </tr>\n    </table>\n  </div>\n\n  <!-- Renovaciones -->\n  <div style=\"background:white;padding:25px;border-bottom:1px solid #eee;\">\n    <h2 style=\"color:#2c3e50;border-bottom:2px solid #f39c12;padding-bottom:8px;margin-top:0;\">Membresias por Vencer este Mes</h2>\n    ${renovacionesHTML}\n  </div>\n\n  <!-- Eventos -->\n  <div style=\"background:white;padding:25px;border-bottom:1px solid #eee;\">\n    <h2 style=\"color:#2c3e50;border-bottom:2px solid #9b59b6;padding-bottom:8px;margin-top:0;\">Proximos Eventos (30 dias)</h2>\n    ${eventosHTML}\n  </div>\n\n  <!-- Pipeline -->\n  <div style=\"background:white;padding:25px;border-bottom:1px solid #eee;\">\n    <h2 style=\"color:#2c3e50;border-bottom:2px solid #27ae60;padding-bottom:8px;margin-top:0;\">Pipeline Comercial - Sponsors</h2>\n    <p style=\"color:#7f8c8d;\">Deals abiertos: <strong>${totalDeals}</strong></p>\n    ${pipelineHTML}\n  </div>\n\n  <!-- Tareas Vencidas -->\n  <div style=\"background:white;padding:25px;border-bottom:1px solid #eee;\">\n    <h2 style=\"color:#2c3e50;border-bottom:2px solid #e74c3c;padding-bottom:8px;margin-top:0;\">Tareas Vencidas por Area</h2>\n    ${tareasHTML}\n  </div>\n\n  <!-- Footer -->\n  <div style=\"background:#2c3e50;color:white;padding:20px;border-radius:0 0 10px 10px;text-align:center;font-size:12px;\">\n    <p style=\"margin:0;\">Reporte generado automaticamente por n8n | FTC-WF-005</p>\n    <p style=\"margin:5px 0 0 0;opacity:0.7;\">FinteChile - Asociacion Gremial Fintech de Chile</p>\n  </div>\n\n</body>\n</html>\n`;\n\n// --- Compilar resumen para Slack (formato mrkdwn) ---\nconst montoTotalFormatted = montoTotalPipeline.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });\n\nlet tareasSlack = '';\nif (totalTareasVencidas > 0) {\n  for (const [area, items] of Object.entries(tareasPorArea)) {\n    tareasSlack += `  - ${area}: ${items.length} vencida(s)\\n`;\n  }\n} else {\n  tareasSlack += '  Sin tareas vencidas\\n';\n}\n\nconst slackMessage = `:bar_chart: *Reporte Semanal KPIs - ${fechaReporte}*\\n\\n` +\n  `*Empresas Activas:* ${totalEmpresasActivas}\\n` +\n  `*Renovaciones por Vencer (este mes):* ${totalRenovaciones}\\n` +\n  `*Proximos Eventos (30 dias):* ${totalEventos}\\n` +\n  `*Pipeline Comercial:* ${totalDeals} deals abiertos | ${montoTotalFormatted}\\n` +\n  `*Tareas Vencidas:* ${totalTareasVencidas}\\n` +\n  `${tareasSlack}\\n` +\n  `_Reporte completo enviado por email. | FTC-WF-005_`;\n\nconst emailSubject = `[FinteChile] Reporte Semanal KPIs - ${now.toLocaleDateString('es-CL', { timeZone: 'America/Santiago' })}`;\n\nreturn [{\n  json: {\n    htmlEmail,\n    slackMessage,\n    emailSubject,\n    kpis: {\n      totalEmpresasActivas,\n      totalRenovaciones,\n      totalEventos,\n      totalDeals,\n      montoTotalPipeline,\n      totalTareasVencidas,\n      tareasPorArea: Object.fromEntries(\n        Object.entries(tareasPorArea).map(([k, v]) => [k, v.length])\n      )\n    },\n    fechaReporte\n  }\n}];"
+      },
+      "id": "code-compile-kpis",
+      "name": "Compilar Reporte KPIs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        460
+      ],
+      "notes": "Recibe datos de todas las consultas Notion, compila KPIs y genera HTML para email y mensaje para Slack."
+    },
+    {
+      "parameters": {
+        "sendTo": "angel@fintechile.org, joseph@fintechile.org",
+        "subject": "={{ $json.emailSubject }}",
+        "emailType": "html",
+        "message": "={{ $json.htmlEmail }}",
+        "options": {
+          "senderName": "FinteChile Ops",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-send-report",
+      "name": "Enviar Email Reporte",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        360
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-cred-id",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Envia el reporte HTML por email a Angel, Joseph y lista de distribucion de liderazgo."
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_CHANNEL_EJECUTIVO }}"
+        },
+        "text": "={{ $json.slackMessage }}",
+        "otherOptions": {
+          "mrkdwn": true,
+          "unfurl_links": false,
+          "unfurl_media": false
+        }
+      },
+      "id": "slack-send-summary",
+      "name": "Enviar Resumen a Slack #ejecutivo",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        560
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-cred-id",
+          "name": "Slack account"
+        }
+      },
+      "notes": "Envia resumen de KPIs al canal #ejecutivo en Slack."
+    }
+  ],
+  "connections": {
+    "Lunes 08:00 CLT": {
+      "main": [
+        [
+          {
+            "node": "Query Empresas Activas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Renovaciones por Vencer",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Proximos Eventos (30 dias)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Sponsors Pipeline Abierto",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Tareas Vencidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Empresas Activas": {
+      "main": [
+        [
+          {
+            "node": "Compilar Reporte KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Renovaciones por Vencer": {
+      "main": [
+        [
+          {
+            "node": "Compilar Reporte KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Proximos Eventos (30 dias)": {
+      "main": [
+        [
+          {
+            "node": "Compilar Reporte KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Sponsors Pipeline Abierto": {
+      "main": [
+        [
+          {
+            "node": "Compilar Reporte KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Tareas Vencidas": {
+      "main": [
+        [
+          {
+            "node": "Compilar Reporte KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compilar Reporte KPIs": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email Reporte",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Enviar Resumen a Slack #ejecutivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Santiago"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "tags": [
+    {
+      "name": "Comunicaciones"
+    },
+    {
+      "name": "KPIs"
+    },
+    {
+      "name": "FinteChile"
+    }
+  ]
+}

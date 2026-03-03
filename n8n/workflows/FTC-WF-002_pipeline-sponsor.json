@@ -1,0 +1,935 @@
+{
+  "name": "FTC-WF-002_pipeline-sponsor",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FTC-WF-002 Pipeline de Sponsors\n\n**Descripcion**: Monitorea cambios de estado en el pipeline de sponsors y ejecuta acciones automatizadas segun la etapa.\n\n**Owner**: Equipo Comercial / Ops FinteChile\n\n**Fecha de creacion**: 2025-02-18\n\n**Version**: 1.0.0\n\n**Folder**: /Core\n\n**Criticidad**: Alta\n\n---\n\n**Env vars requeridas**:\n- `NOTION_DB_SPONSORS_ID`\n- `NOTION_DB_TAREAS_ID`\n- `SLACK_CHANNEL_EJECUTIVO`\n- `SLACK_CHANNEL_OPS`\n- `EMAIL_FROM`\n- `DRIVE_FOLDER_MIEMBROS_ID`\n\n**Credenciales**:\n- Notion account\n- Gmail account\n- Slack account\n- Google Drive account",
+        "height": 480,
+        "width": 380,
+        "color": 4
+      },
+      "id": "sticky-metadata",
+      "name": "Workflow Metadata",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_SPONSORS_ID }}"
+        },
+        "returnAll": false,
+        "limit": 50,
+        "filterType": "formula",
+        "formula": "{{ { \"and\": [ { \"timestamp\": \"last_edited_time\", \"last_edited_time\": { \"past_week\": {} } } ] } }}",
+        "options": {}
+      },
+      "id": "notion-query-sponsors",
+      "name": "Query Sponsors Pipeline",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        500,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Query Notion DB 'Sponsors Pipeline' for recently modified records. Uses last_edited_time filter. Env var: NOTION_DB_SPONSORS_ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "// FTC-WF-002: Filtrar registros donde el Estado cambio respecto al Estado_Anterior\n// Solo procesar si el estado actual difiere del estado anterior almacenado\n\nconst items = $input.all();\nconst changedItems = [];\n\nfor (const item of items) {\n  const props = item.json.properties || item.json;\n\n  // Extraer Estado actual y Estado_Anterior\n  // Ajustar nombres de propiedad segun schema real de Notion\n  const estadoActual = props.Estado?.select?.name\n    || props.Estado?.status?.name\n    || props['Estado']?.select?.name\n    || '';\n\n  const estadoAnterior = props.Estado_Anterior?.rich_text?.[0]?.plain_text\n    || props['Estado_Anterior']?.rich_text?.[0]?.plain_text\n    || props.Estado_Anterior?.select?.name\n    || '';\n\n  // Extraer datos utiles del sponsor\n  const sponsorName = props.Name?.title?.[0]?.plain_text\n    || props.Nombre?.title?.[0]?.plain_text\n    || props.Empresa?.title?.[0]?.plain_text\n    || 'Sin nombre';\n\n  const ownerEmail = props.Owner?.people?.[0]?.person?.email\n    || props.Responsable?.people?.[0]?.person?.email\n    || '';\n\n  const ownerName = props.Owner?.people?.[0]?.name\n    || props.Responsable?.people?.[0]?.name\n    || '';\n\n  const contactEmail = props.Email?.email\n    || props.Contacto_Email?.email\n    || '';\n\n  const contactName = props.Contacto?.rich_text?.[0]?.plain_text\n    || props.Nombre_Contacto?.rich_text?.[0]?.plain_text\n    || '';\n\n  const pageId = item.json.id || '';\n\n  const lossReason = props.Motivo_Perdida?.select?.name\n    || props.Motivo_Perdida?.rich_text?.[0]?.plain_text\n    || 'No especificado';\n\n  // Solo incluir si hay cambio de estado\n  if (estadoActual && estadoActual !== estadoAnterior) {\n    changedItems.push({\n      json: {\n        pageId,\n        sponsorName,\n        estadoActual,\n        estadoAnterior,\n        ownerEmail,\n        ownerName,\n        contactEmail,\n        contactName,\n        lossReason,\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\n// Si no hay cambios, retornar array vacio para detener el flujo\nif (changedItems.length === 0) {\n  return [{ json: { noChanges: true } }];\n}\n\nreturn changedItems;"
+      },
+      "id": "code-compare-estado",
+      "name": "Compare Estado Changes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ],
+      "notes": "Compares current 'Estado' with 'Estado_Anterior' field. Only passes through records where a state change was detected."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.noChanges }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-has-changes",
+      "name": "Has Changes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        940,
+        300
+      ],
+      "notes": "Stops flow if no state changes were detected (noChanges=true goes to false/discard output)."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.estadoActual }}",
+                    "rightValue": "Contactado",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": "Contactado"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.estadoActual }}",
+                    "rightValue": "Negociacion",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": "Negociacion"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.estadoActual }}",
+                    "rightValue": "Cerrado Won",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": "Cerrado Won"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.estadoActual }}",
+                    "rightValue": "Cerrado Lost",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": "Cerrado Lost"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-estado",
+      "name": "Switch Estado",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1160,
+        300
+      ],
+      "notes": "Routes records based on the new Estado value: Contactado, Negociacion, Cerrado Won, Cerrado Lost."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_TAREAS_ID }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Name|title",
+              "title": "Seguimiento: {{ $json.sponsorName }} - Contactado"
+            },
+            {
+              "key": "Asignado|people",
+              "peopleValue": [
+                "={{ $json.ownerEmail }}"
+              ]
+            },
+            {
+              "key": "Estado|select",
+              "selectValue": "Pendiente"
+            },
+            {
+              "key": "Prioridad|select",
+              "selectValue": "Alta"
+            },
+            {
+              "key": "Tipo|select",
+              "selectValue": "Follow-up Sponsor"
+            },
+            {
+              "key": "Descripcion|rich_text",
+              "textContent": "Tarea automatica: Realizar seguimiento del sponsor {{ $json.sponsorName }} que paso a estado Contactado el {{ $json.timestamp }}. Responsable comercial: {{ $json.ownerName }}."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-task-contactado",
+      "name": "Create Follow-up Task (Contactado)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Creates a follow-up task in Notion DB 'Tareas' assigned to the commercial owner when a sponsor reaches 'Contactado' stage."
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_CHANNEL_EJECUTIVO }}"
+        },
+        "text": ":handshake: *Sponsor en Negociacion*\n\n*Empresa*: {{ $json.sponsorName }}\n*Responsable*: {{ $json.ownerName }}\n*Estado anterior*: {{ $json.estadoAnterior }}\n*Fecha*: {{ $json.timestamp }}\n\nEl sponsor ha avanzado a etapa de negociacion. Liderazgo puede revisar el progreso en la base de Sponsors.",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "slack-negociacion",
+      "name": "Notify Ejecutivo (Negociacion)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        220
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack account"
+        }
+      },
+      "notes": "Sends Slack notification to #ejecutivo channel when a sponsor enters 'Negociacion' stage."
+    },
+    {
+      "parameters": {
+        "operation": "createFolder",
+        "name": "={{ $json.sponsorName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.DRIVE_FOLDER_MIEMBROS_ID }}"
+        },
+        "options": {}
+      },
+      "id": "drive-create-sponsor-folder",
+      "name": "Create Sponsor Folder (Drive)",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1420,
+        440
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Creates a root folder for the new sponsor under /Miembros/ in Google Drive when deal is 'Cerrado Won'."
+    },
+    {
+      "parameters": {
+        "operation": "createFolder",
+        "name": "01_Contrato",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $node['Create Sponsor Folder (Drive)'].json.id }}"
+        },
+        "options": {}
+      },
+      "id": "drive-subfolder-contrato",
+      "name": "Subfolder Contrato",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1660,
+        340
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Creates '01_Contrato' subfolder inside the sponsor folder."
+    },
+    {
+      "parameters": {
+        "operation": "createFolder",
+        "name": "02_Facturacion",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $node['Create Sponsor Folder (Drive)'].json.id }}"
+        },
+        "options": {}
+      },
+      "id": "drive-subfolder-facturacion",
+      "name": "Subfolder Facturacion",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1660,
+        500
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Creates '02_Facturacion' subfolder inside the sponsor folder."
+    },
+    {
+      "parameters": {
+        "operation": "createFolder",
+        "name": "03_Logos_Material",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $node['Create Sponsor Folder (Drive)'].json.id }}"
+        },
+        "options": {}
+      },
+      "id": "drive-subfolder-logos",
+      "name": "Subfolder Logos Material",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1660,
+        660
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Creates '03_Logos_Material' subfolder inside the sponsor folder."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.NOTION_DB_TAREAS_ID }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Name|title",
+              "title": "Onboarding Sponsor: {{ $json.sponsorName }}"
+            },
+            {
+              "key": "Asignado|people",
+              "peopleValue": [
+                "={{ $json.ownerEmail }}"
+              ]
+            },
+            {
+              "key": "Estado|select",
+              "selectValue": "Pendiente"
+            },
+            {
+              "key": "Prioridad|select",
+              "selectValue": "Alta"
+            },
+            {
+              "key": "Tipo|select",
+              "selectValue": "Onboarding"
+            },
+            {
+              "key": "Descripcion|rich_text",
+              "textContent": "Tarea automatica: Ejecutar proceso de onboarding para el nuevo sponsor {{ $json.sponsorName }}. Deal cerrado exitosamente (Cerrado Won) el {{ $json.timestamp }}. Contacto: {{ $json.contactName }} ({{ $json.contactEmail }}). Carpeta Drive creada en /Miembros/{{ $json.sponsorName }}/."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-task-onboarding-won",
+      "name": "Create Onboarding Task (Won)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        820
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Creates an onboarding task in Notion DB 'Tareas' when a sponsor deal is won."
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.contactEmail }}",
+        "subject": "Bienvenido a FinteChile - {{ $json.sponsorName }}",
+        "emailType": "html",
+        "message": "<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #1a73e8;\">Felicitaciones y Bienvenida!</h2>\n  <p>Estimado/a {{ $json.contactName }},</p>\n  <p>Nos complace darle la bienvenida oficial a <strong>{{ $json.sponsorName }}</strong> como sponsor de FinteChile.</p>\n  <p>Estamos muy contentos de contar con su apoyo y participacion en nuestra comunidad fintech. En los proximos dias, nuestro equipo se pondra en contacto para coordinar los siguientes pasos del proceso de onboarding:</p>\n  <ul>\n    <li>Firma de contrato y documentacion</li>\n    <li>Definicion de beneficios y visibilidad</li>\n    <li>Envio de logos y material grafico</li>\n    <li>Calendario de actividades y eventos</li>\n  </ul>\n  <p>Si tiene alguna consulta, no dude en responder a este correo.</p>\n  <p>Saludos cordiales,<br/><strong>Equipo FinteChile</strong></p>\n</div>",
+        "options": {
+          "senderName": "FinteChile",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-congratulations-won",
+      "name": "Send Congratulations Email (Won)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1420,
+        1020
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Sends a congratulations/welcome email to the sponsor contact when deal is 'Cerrado Won'."
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_CHANNEL_OPS }}"
+        },
+        "text": ":tada: *Nuevo Sponsor Cerrado!*\n\n*Empresa*: {{ $json.sponsorName }}\n*Contacto*: {{ $json.contactName }} ({{ $json.contactEmail }})\n*Responsable*: {{ $json.ownerName }}\n*Fecha cierre*: {{ $json.timestamp }}\n\n:white_check_mark: Carpeta Drive creada en /Miembros/{{ $json.sponsorName }}/\n:white_check_mark: Tarea de onboarding creada en Notion\n:white_check_mark: Email de bienvenida enviado\n\nProximo paso: Ejecutar checklist de onboarding.",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "slack-ops-won",
+      "name": "Notify Ops (Cerrado Won)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        1220
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack account"
+        }
+      },
+      "notes": "Sends Slack notification to #ops channel with full summary when a sponsor deal is won."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Motivo_Perdida|rich_text",
+              "textContent": "={{ $json.lossReason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-loss-reason",
+      "name": "Update Loss Reason (Lost)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
+        1460
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Updates the Notion record with the loss reason when deal is 'Cerrado Lost'."
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.contactEmail }}",
+        "subject": "FinteChile - Nos gustaria conocer tu opinion",
+        "emailType": "html",
+        "message": "<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #1a73e8;\">Gracias por considerar FinteChile</h2>\n  <p>Estimado/a {{ $json.contactName }},</p>\n  <p>Lamentamos que en esta oportunidad no hayamos podido concretar una alianza con <strong>{{ $json.sponsorName }}</strong>.</p>\n  <p>Su opinion es muy valiosa para nosotros. Nos ayudaria mucho si pudiera tomarse un momento para compartir su feedback sobre el proceso:</p>\n  <p style=\"text-align: center; margin: 30px 0;\">\n    <a href=\"https://forms.fintechile.org/feedback-sponsor\" style=\"background-color: #1a73e8; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;\">Completar Encuesta de Feedback</a>\n  </p>\n  <p>Quedamos a disposicion para futuras oportunidades de colaboracion.</p>\n  <p>Saludos cordiales,<br/><strong>Equipo FinteChile</strong></p>\n</div>",
+        "options": {
+          "senderName": "FinteChile",
+          "replyTo": "={{ $env.EMAIL_FROM }}"
+        }
+      },
+      "id": "gmail-feedback-lost",
+      "name": "Send Feedback Survey Email (Lost)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1660,
+        1460
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Sends a feedback survey email to the sponsor contact when deal is 'Cerrado Lost'."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Estado_Anterior|rich_text",
+              "textContent": "={{ $json.estadoActual }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-estado-anterior-contactado",
+      "name": "Update Estado_Anterior (Contactado)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1700,
+        0
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Updates 'Estado_Anterior' to current estado after processing Contactado branch."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Estado_Anterior|rich_text",
+              "textContent": "={{ $json.estadoActual }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-estado-anterior-negociacion",
+      "name": "Update Estado_Anterior (Negociacion)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1700,
+        220
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Updates 'Estado_Anterior' to current estado after processing Negociacion branch."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Estado_Anterior|rich_text",
+              "textContent": "={{ $json.estadoActual }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-estado-anterior-won",
+      "name": "Update Estado_Anterior (Won)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1700,
+        1220
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Updates 'Estado_Anterior' to current estado after processing Cerrado Won branch."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Estado_Anterior|rich_text",
+              "textContent": "={{ $json.estadoActual }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update-estado-anterior-lost",
+      "name": "Update Estado_Anterior (Lost)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        1460
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion account"
+        }
+      },
+      "notes": "Updates 'Estado_Anterior' to current estado after processing Cerrado Lost branch."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Query Sponsors Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Sponsors Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Compare Estado Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare Estado Changes": {
+      "main": [
+        [
+          {
+            "node": "Has Changes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Changes?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Switch Estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Estado": {
+      "main": [
+        [
+          {
+            "node": "Create Follow-up Task (Contactado)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Ejecutivo (Negociacion)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Sponsor Folder (Drive)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Create Onboarding Task (Won)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Congratulations Email (Won)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Ops (Cerrado Won)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Loss Reason (Lost)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Follow-up Task (Contactado)": {
+      "main": [
+        [
+          {
+            "node": "Update Estado_Anterior (Contactado)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Ejecutivo (Negociacion)": {
+      "main": [
+        [
+          {
+            "node": "Update Estado_Anterior (Negociacion)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Sponsor Folder (Drive)": {
+      "main": [
+        [
+          {
+            "node": "Subfolder Contrato",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Subfolder Facturacion",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Subfolder Logos Material",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Ops (Cerrado Won)": {
+      "main": [
+        [
+          {
+            "node": "Update Estado_Anterior (Won)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Loss Reason (Lost)": {
+      "main": [
+        [
+          {
+            "node": "Send Feedback Survey Email (Lost)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Feedback Survey Email (Lost)": {
+      "main": [
+        [
+          {
+            "node": "Update Estado_Anterior (Lost)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Santiago",
+    "saveExecutionProgress": true
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "id": "FTC-WF-002",
+  "tags": [
+    {
+      "name": "Core"
+    },
+    {
+      "name": "Sponsors"
+    },
+    {
+      "name": "Pipeline"
+    },
+    {
+      "name": "Alta Criticidad"
+    }
+  ]
+}
